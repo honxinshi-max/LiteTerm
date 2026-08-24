@@ -43,6 +43,65 @@ final class LocalOperationQueueTests: XCTestCase {
         let resumedValues = await recorder.values()
         XCTAssertEqual(resumedValues, ["old-start", "old-finish", "old-second", "scope-stop", "new-root"])
     }
+
+    @MainActor
+    func testRepeatedReducerSubmitsStayWithinPendingCountAndCostWhileFirstOperationIsBlocked() async {
+        let queue = LocalOperationQueue(maximumPendingOperations: 3, maximumPendingCost: 6)
+        let gate = DelayedOperationGate()
+        let recorder = OperationRecorder()
+        var reducer = LocalTerminalInputReducer()
+        var acceptedCount = 0
+        var rejectedCount = 0
+
+        for index in 0..<12 {
+            let events = reducer.reduce(Array("x\(index % 10)\r".utf8))
+            for event in events {
+                guard case .submit(let command) = event else { continue }
+                let accepted = queue.enqueue(operationCost: command.utf8.count) {
+                    if index == 0 {
+                        await gate.wait()
+                    }
+                    await recorder.append(command)
+                }
+                if accepted {
+                    acceptedCount += 1
+                } else {
+                    rejectedCount += 1
+                }
+            }
+        }
+
+        await gate.waitUntilStarted()
+        XCTAssertEqual(acceptedCount, 3)
+        XCTAssertEqual(rejectedCount, 9)
+        XCTAssertEqual(queue.pendingOperationCount, 3)
+        XCTAssertEqual(queue.pendingOperationCost, 6)
+
+        let drain = Task { @MainActor in
+            await queue.suspendAndDrain()
+        }
+        while queue.isAccepting {
+            await Task.yield()
+        }
+        XCTAssertEqual(queue.enqueue(operationCost: 1) {}, false)
+
+        await gate.release()
+        await drain.value
+        XCTAssertEqual(queue.pendingOperationCount, 0)
+        XCTAssertEqual(queue.pendingOperationCost, 0)
+        let drainedValues = await recorder.values()
+        XCTAssertEqual(drainedValues.count, 3)
+
+        queue.resume()
+        XCTAssertEqual(queue.enqueue(operationCost: 6) {
+            await recorder.append("resumed")
+        }, true)
+        await queue.suspendAndDrain()
+        XCTAssertEqual(queue.pendingOperationCount, 0)
+        XCTAssertEqual(queue.pendingOperationCost, 0)
+        let resumedValues = await recorder.values()
+        XCTAssertEqual(resumedValues.last, "resumed")
+    }
 }
 
 private actor DelayedOperationGate {

@@ -105,4 +105,28 @@ final class LocalTerminalInputReducerTests: XCTestCase {
             ]
         )
     }
+
+    func testEchoAndInterruptReserveTheExactEventBudgetAtomically() {
+        var exact = LocalTerminalInputReducer(maximumEventsPerReduction: 2)
+        XCTAssertEqual(
+            exact.reduce([UInt8(ascii: "a"), 0x03]),
+            [.echo([UInt8(ascii: "a")]), .interrupt]
+        )
+
+        var insufficient = LocalTerminalInputReducer(maximumEventsPerReduction: 1)
+        let first = insufficient.reduce([UInt8(ascii: "a"), 0x03])
+        XCTAssertEqual(first, [.echo([UInt8(ascii: "a")])])
+        XCTAssertEqual(first.count <= 1, true)
+        XCTAssertEqual(insufficient.reduce([0x03]), [.interrupt])
+    }
+
+    func testEchoAndEraseNeverExceedAnInsufficientEventBudget() {
+        var reducer = LocalTerminalInputReducer(maximumEventsPerReduction: 1)
+
+        let first = reducer.reduce([UInt8(ascii: "a"), 0x7F])
+
+        XCTAssertEqual(first, [.echo([UInt8(ascii: "a")])])
+        XCTAssertEqual(first.count <= 1, true)
+        XCTAssertEqual(reducer.reduce([0x7F]), [.erase])
+    }
 }

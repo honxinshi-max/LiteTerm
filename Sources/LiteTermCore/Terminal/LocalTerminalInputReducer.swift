@@ -79,7 +79,7 @@ public struct LocalTerminalInputReducer: Sendable {
             input.removeAll(keepingCapacity: true)
         }
 
-        for byte in bytes.prefix(maximumBatchBytes) {
+        inputLoop: for byte in bytes.prefix(maximumBatchBytes) {
             guard events.count < maximumEventsPerReduction else { break }
 
             if !partialScalar.isEmpty {
@@ -112,6 +112,10 @@ public struct LocalTerminalInputReducer: Sendable {
 
             switch byte {
             case 0x03:
+                let requiredEvents = (echoRun.isEmpty ? 0 : 1) + 1
+                guard events.count + requiredEvents <= maximumEventsPerReduction else {
+                    break inputLoop
+                }
                 flushEcho()
                 input.removeAll(keepingCapacity: true)
                 partialScalar.removeAll(keepingCapacity: true)
@@ -119,8 +123,12 @@ public struct LocalTerminalInputReducer: Sendable {
                 events.append(.interrupt)
 
             case 0x08, 0x7F:
-                flushEcho()
                 if !input.isEmpty {
+                    let requiredEvents = (echoRun.isEmpty ? 0 : 1) + 1
+                    guard events.count + requiredEvents <= maximumEventsPerReduction else {
+                        break inputLoop
+                    }
+                    flushEcho()
                     if let current = String(bytes: input, encoding: .utf8) {
                         input = Array(current.dropLast().utf8)
                     } else {
@@ -131,14 +139,18 @@ public struct LocalTerminalInputReducer: Sendable {
 
             case 0x0D:
                 let requiredEvents = (echoRun.isEmpty ? 0 : 1) + 1
-                guard events.count + requiredEvents <= maximumEventsPerReduction else { break }
+                guard events.count + requiredEvents <= maximumEventsPerReduction else {
+                    break inputLoop
+                }
                 flushEcho()
                 submit()
                 didReceiveCarriageReturn = true
 
             case 0x0A:
                 let requiredEvents = (echoRun.isEmpty ? 0 : 1) + 1
-                guard events.count + requiredEvents <= maximumEventsPerReduction else { break }
+                guard events.count + requiredEvents <= maximumEventsPerReduction else {
+                    break inputLoop
+                }
                 flushEcho()
                 submit()
 

@@ -22,6 +22,27 @@ public struct WorkspacePathResolver: Sendable {
     }
 
     public func resolve(_ userPath: String) throws -> URL {
+        try resolve(userPath, rejectingSymbolicLinks: false)
+    }
+
+    public func resolveWithoutSymbolicLinks(_ rootRelativePath: String) throws -> URL {
+        try resolve(rootRelativePath, rejectingSymbolicLinks: true)
+    }
+
+    public func rootRelativePath(for url: URL) throws -> String {
+        let resolved = try Self.canonicalURL(url, pathInspector: pathInspector)
+        guard Self.isContained(resolved, by: rootURL) else {
+            throw WorkspacePathResolverError.outsideWorkspace
+        }
+        return resolved.pathComponents
+            .dropFirst(rootURL.pathComponents.count)
+            .joined(separator: "/")
+    }
+
+    private func resolve(
+        _ userPath: String,
+        rejectingSymbolicLinks: Bool
+    ) throws -> URL {
         let candidate: URL
         if userPath.hasPrefix("/") {
             let virtualPath = String(userPath.drop(while: { $0 == "/" }))
@@ -30,7 +51,11 @@ public struct WorkspacePathResolver: Sendable {
             candidate = currentDirectoryURL.appendingPathComponent(userPath)
         }
 
-        let resolved = try Self.canonicalURL(candidate, pathInspector: pathInspector)
+        let resolved = try Self.canonicalURL(
+            candidate,
+            pathInspector: pathInspector,
+            rejectingSymbolicLinks: rejectingSymbolicLinks
+        )
         guard Self.isContained(resolved, by: rootURL) else {
             throw WorkspacePathResolverError.outsideWorkspace
         }
@@ -51,7 +76,8 @@ public struct WorkspacePathResolver: Sendable {
 
     private static func canonicalURL(
         _ url: URL,
-        pathInspector: any WorkspacePathInspecting
+        pathInspector: any WorkspacePathInspecting,
+        rejectingSymbolicLinks: Bool = false
     ) throws -> URL {
         var resolvedComponents: [String] = []
         var pendingComponents = url.path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
@@ -70,6 +96,9 @@ public struct WorkspacePathResolver: Sendable {
                 let candidatePath = "/" + (resolvedComponents + [component]).joined(separator: "/")
                 let candidateURL = URL(fileURLWithPath: candidatePath)
                 if let destination = try pathInspector.symbolicLinkDestination(at: candidateURL) {
+                    guard !rejectingSymbolicLinks else {
+                        throw WorkspacePathResolverError.unresolvablePath
+                    }
                     symlinkCount += 1
                     guard symlinkCount <= 40 else {
                         throw WorkspacePathResolverError.unresolvablePath

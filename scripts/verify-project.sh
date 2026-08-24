@@ -221,7 +221,7 @@ RUBY
 pass "project model, pins, targets, distinct privacy resources, orientations, local-network copy, and privacy declarations match"
 
 forbidden_pattern='SFTP|port[[:space:]_-]*forward|Docker|VirtualMachine|PythonKit|JavaScriptCore|NodeRuntime|background[[:space:]_-]*keepalive|UIBackgroundModes|NSBonjourServices|CKContainer|CloudKit|NSTask([^[:alnum:]_]|$)|dlopen[[:space:]]*\('
-process_pattern='(^|[^[:alnum:]_.])Process[[:space:]]*\('
+process_pattern='(^|[^[:alnum:]_])(Foundation[.])?Process[[:space:]]*\('
 if command -v rg >/dev/null 2>&1; then
     forbidden_matches=$(rg -n -i "$forbidden_pattern" LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj || true)
     process_matches=$(rg -n "$process_pattern" LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj || true)
@@ -236,17 +236,17 @@ if test -n "$forbidden_matches$process_matches"; then
 fi
 pass "production/project scope contains no forbidden product additions"
 
-secret_pattern='"(password|privateKey|private_key|passphrase|secret|token)"[[:space:]]*[,]]|CodingKeys.*(password|privateKey|passphrase|secret|token)'
+supplemental_secret_pattern='"(password|privateKey|private_key|passphrase|secret|token)"'
 if command -v rg >/dev/null 2>&1; then
-    secret_matches=$(rg -n -i "$secret_pattern" Sources/LiteTermCore/Hosts/SSHHost.swift Sources/LiteTermCore/Hosts/HostRepository.swift LiteTerm/Features/FileAccess/FolderAuthorizationStore.swift || true)
+    secret_matches=$(rg -n -i "$supplemental_secret_pattern" Sources/LiteTermCore/Hosts/SSHHost.swift Sources/LiteTermCore/Hosts/HostRepository.swift LiteTerm/Features/FileAccess/FolderAuthorizationStore.swift || true)
 else
-    secret_matches=$(/usr/bin/grep -E -n -i "$secret_pattern" Sources/LiteTermCore/Hosts/SSHHost.swift Sources/LiteTermCore/Hosts/HostRepository.swift LiteTerm/Features/FileAccess/FolderAuthorizationStore.swift || true)
+    secret_matches=$(/usr/bin/grep -E -n -i "$supplemental_secret_pattern" Sources/LiteTermCore/Hosts/SSHHost.swift Sources/LiteTermCore/Hosts/HostRepository.swift LiteTerm/Features/FileAccess/FolderAuthorizationStore.swift || true)
 fi
 if test -n "$secret_matches"; then
     printf '%s\n' "$secret_matches"
-    fail "secret-bearing persisted field found in host/bookmark metadata scope"
+    fail "supplemental static scan found a secret-bearing serialized-key literal"
 fi
-pass "host/bookmark persisted-field scope contains no secret-bearing key"
+pass "behavioral Core runner exact-key check passed; supplemental persisted-key literal scan found no match"
 
 configured_remotes=$(git remote)
 if test -z "$configured_remotes"; then
@@ -257,13 +257,25 @@ fi
 
 if xcodebuild -version >/dev/null 2>&1 && ! xcode-select -p | /usr/bin/grep -q '/CommandLineTools$'; then
     derived_data=$(mktemp -d "${TMPDIR:-/tmp}/LiteTerm-Verify-DerivedData.XXXXXX")
+    tracked_status_before=$(git status --porcelain=v1 --untracked-files=no)
+    working_diff_before=$(git diff --no-ext-diff)
+    staged_diff_before=$(git diff --cached --no-ext-diff)
     xcodebuild \
         -project LiteTerm.xcodeproj \
         -scheme LiteTerm \
         -destination 'generic/platform=iOS Simulator' \
         -derivedDataPath "$derived_data" \
+        -disableAutomaticPackageResolution \
+        -onlyUsePackageVersionsFromResolvedFile \
         CODE_SIGNING_ALLOWED=NO \
         build-for-testing
+    tracked_status_after=$(git status --porcelain=v1 --untracked-files=no)
+    working_diff_after=$(git diff --no-ext-diff)
+    staged_diff_after=$(git diff --cached --no-ext-diff)
+    test "$tracked_status_before" = "$tracked_status_after" || fail "full-Xcode build changed tracked status"
+    test "$working_diff_before" = "$working_diff_after" || fail "full-Xcode build changed the tracked working diff"
+    test "$staged_diff_before" = "$staged_diff_after" || fail "full-Xcode build changed the staged diff"
+    pass "full-Xcode build left tracked and staged source state unchanged"
     pass "full-Xcode iOS Simulator build-for-testing"
     printf 'OPEN: simulator test execution, physical-iPad, live-SSH, RSS, archive privacy report, and App Store review still require their named environments.\n'
 else

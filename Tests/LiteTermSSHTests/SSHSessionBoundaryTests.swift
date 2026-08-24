@@ -148,6 +148,33 @@ final class SSHSessionBoundaryTests: XCTestCase {
         XCTAssertNotNil(model.authorizationErrorMessage)
     }
 
+    func testCoordinatorPassesCommandCostAndRejectsBeyondTheBlockedQueueBudget() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Queue-Boundary-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        let queue = LocalOperationQueue(maximumPendingOperations: 2, maximumPendingCost: 5)
+        let gate = BoundaryOperationGate()
+        XCTAssertTrue(queue.enqueue(operationCost: 2) {
+            await gate.wait()
+        })
+        await gate.waitUntilStarted()
+        let terminal = TerminalSessionCoordinator(rootURL: root, localOperationQueue: queue)
+
+        XCTAssertTrue(terminal.runLocalCommand("pwd"))
+        XCTAssertFalse(terminal.runLocalCommand("ls"))
+        XCTAssertEqual(queue.pendingOperationCount, 2)
+        XCTAssertEqual(queue.pendingOperationCost, 5)
+
+        await gate.release()
+        await terminal.suspendLocalInputAndDrain()
+        XCTAssertEqual(queue.pendingOperationCount, 0)
+        XCTAssertEqual(queue.pendingOperationCost, 0)
+        terminal.resumeLocalInput()
+        XCTAssertTrue(terminal.runLocalCommand("ls"))
+        await terminal.suspendLocalInputAndDrain()
+        terminal.resumeLocalInput()
+    }
+
     func testDuplicateAuthenticationSuccessClaimsOnlyOneChildSession() {
         var gate = SSHChildSessionCreationGate()
 
@@ -646,6 +673,27 @@ final class SSHSessionBoundaryTests: XCTestCase {
         for _ in 0..<6 {
             await Task.yield()
         }
+    }
+}
+
+private actor BoundaryOperationGate {
+    private var started = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        started = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func waitUntilStarted() async {
+        while !started {
+            await Task.yield()
+        }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
     }
 }
 

@@ -7,10 +7,10 @@ LiteTerm is an iPad-first terminal with one active terminal session. Local mode 
 - `LiteTermCore` is Foundation-only. It owns Local parsing/filesystem containment, bounded terminal state, host metadata, host-key policy, reconnect policy, and Local → SSH → Local flow state.
 - The `LiteTerm` app owns SwiftUI/UIKit, SwiftTerm, Files authorization and security-scoped bookmarks, coordinated file access, native editing, Keychain, and SwiftNIO SSH over NIOTransportServices.
 - Exactly one terminal mode/session is active. A new SSH connection supersedes the old generation, manual disconnect cancels retry intent, and stale callbacks cannot mutate the current session.
-- Local input, each Local input batch, and each in-memory command-history entry are capped at 16 KiB; one reduction emits at most 128 events; command history is capped at 200 entries and 128 KiB total. SwiftTerm scrollback remains capped at 2,000 lines; `cat` and `edit` are capped at 5 MiB; pending SSH output is capped at 8 MiB and delivered to the UI in batches no larger than 64 KiB.
+- Local input, each Local input batch, and each in-memory command-history entry are capped at 16 KiB; one reduction emits at most 128 events; command history is capped at 200 entries and 128 KiB total. The Local operation queue retains at most 16 running/queued operations and 64 KiB of declared operation cost, rejecting before it retains excess command closures. SwiftTerm scrollback remains capped at 2,000 lines; `cat` and `edit` are capped at 5 MiB; pending SSH output is capped at 8 MiB and delivered to the UI in batches no larger than 64 KiB.
 - V0.1 does not include SFTP, port forwarding, plugins, cloud sync, local Unix/process execution, VMs, bundled language runtimes, or background keepalive.
 
-The exact Local command set is `pwd`, `ls`, `cd`, `cat`, `mkdir`, `touch`, `cp`, `mv`, `rm`, `clear`, and `edit`. There are no pipes, redirection, glob expansion, scripts, downloaded commands, or `Process`/`NSTask` execution. Absolute command paths are virtual paths under the selected workspace. `rm` creates a confirmation request showing the exact one-file target and deletes only after the user chooses Delete; cancellation, mode/root changes, and superseding commands invalidate the request. It rejects the workspace root and directories and never removes recursively. `edit` opens the native SwiftUI editor; it does not execute an editor binary. Local Up/Down navigates the bounded command history.
+The exact Local command set is `pwd`, `ls`, `cd`, `cat`, `mkdir`, `touch`, `cp`, `mv`, `rm`, `clear`, and `edit`. There are no pipes, redirection, glob expansion, scripts, downloaded commands, or `Process`/`NSTask` execution. Absolute command paths are virtual paths under the selected workspace. `rm` creates a confirmation request showing the exact one-file target plus a root-relative logical path and stable file identity. Delete confirmation freshly resolves that path without symbolic links, requires the same regular-file identity, and then removes only that file; coordinated File Provider confirmation performs revalidation and removal inside one `NSFileCoordinator` callback. Cancellation, replacement/rename, target or intermediate symlink substitution, mode/root changes, and superseding commands expire the request. Direct Foundation storage still has an unavoidable OS-level race between final identity validation and `FileManager` removal because iOS exposes no portable descriptor-relative no-follow File Provider deletion API; the implementation fails closed on every observable mismatch and does not claim to eliminate that last kernel/provider race. Workspace-root and directory deletion remain forbidden. `edit` opens the native SwiftUI editor; it does not execute an editor binary. Local Up/Down navigates the bounded command history.
 
 Files access is limited to App Documents and a directory the user explicitly chooses with the system folder picker. External access uses one security-scoped bookmark and coordinated file operations. If replacement and restoration of an external scope both fail, the authorization store and terminal root reconcile to App Documents, expose the error, and require re-selection.
 
@@ -40,7 +40,7 @@ git diff --check
 /usr/bin/plutil -lint LiteTerm/Resources/Info.plist LiteTerm/Resources/PrivacyInfo.xcprivacy Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy LiteTerm.xcodeproj/project.pbxproj
 ```
 
-`swift test` compiles the standard test targets in the current Command Line Tools setup; `run-core-tests.sh` is the command that actually executes the custom Core behavior runner. `verify-project.sh` performs read-only checks on tracked sources (Swift build output under `.build` is expected). When full Xcode is selected it additionally runs a generic iOS Simulator `build-for-testing`; without full Xcode that gate is explicitly `OPEN/SKIP`. Portable success is a candidate check, not a release pass.
+`swift test` compiles the standard test targets in the current Command Line Tools setup; `run-core-tests.sh` is the command that actually executes the custom Core behavior runner. `verify-project.sh` performs read-only checks on tracked sources (Swift build output under `.build` is expected). When full Xcode is selected it additionally runs a generic iOS Simulator `build-for-testing` with automatic package resolution disabled, requires the checked-in resolved versions, and verifies tracked/staged source state is unchanged afterward; without full Xcode that gate is explicitly `OPEN/SKIP`. Portable success is a candidate check, not a release pass.
 
 ## Full Xcode, iPad, live SSH, and RSS gates
 
@@ -49,14 +49,14 @@ Select a full Xcode installation, then resolve, build, and test with explicit de
 ```sh
 sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
 xcodebuild -version
-xcodebuild -resolvePackageDependencies -project LiteTerm.xcodeproj -scheme LiteTerm
+xcodebuild -resolvePackageDependencies -project LiteTerm.xcodeproj -scheme LiteTerm -onlyUsePackageVersionsFromResolvedFile
 xcrun simctl list devices available
 SIMULATOR_UDID='<available-ipad-simulator-udid>'
-xcodebuild -project LiteTerm.xcodeproj -scheme LiteTerm -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" build
-xcodebuild -project LiteTerm.xcodeproj -scheme LiteTerm -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" test
+xcodebuild -project LiteTerm.xcodeproj -scheme LiteTerm -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile build
+xcodebuild -project LiteTerm.xcodeproj -scheme LiteTerm -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile test
 xcrun xctrace list devices
 IPAD_UDID='<physical-ipad-udid>'
-xcodebuild -project LiteTerm.xcodeproj -scheme LiteTerm -destination "platform=iOS,id=$IPAD_UDID" test
+xcodebuild -project LiteTerm.xcodeproj -scheme LiteTerm -destination "platform=iOS,id=$IPAD_UDID" -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile test
 ```
 
 On a controlled Mac SSH server, enable Remote Login and record its host fingerprint before performing the 14-step flow in `docs/verification/V0.1-acceptance.md`:

@@ -8,7 +8,16 @@ final class HostRepositoryTests: XCTestCase {
 
         let data = try JSONEncoder().encode(host)
         let json = String(decoding: data, as: UTF8.self)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            XCTFail("SSHHost must encode as one JSON object")
+            return
+        }
+        let allowedKeys: Set<String> = [
+            "id", "label", "hostname", "port", "username",
+            "authenticationKind", "reconnectPreference"
+        ]
 
+        XCTAssertEqual(Set(object.keys), allowedKeys)
         XCTAssertEqual(json.contains(#""password":"#), false)
         XCTAssertEqual(json.contains(#""privateKey":"#), false)
         XCTAssertEqual(json.contains(#""fingerprint":"#), false)

@@ -301,6 +301,57 @@ struct LiteTermCoreTestRunner {
                 expect(staleResult.outputLines == ["Error: deletion request expired"], "a later command invalidates an rm request", &failures)
             }
             expect(fileManager.fileExists(atPath: staleURL.path), "a stale rm request cannot delete its file", &failures)
+
+            let replacementURL = root.appendingPathComponent("docs/replacement.txt")
+            let originalURL = root.appendingPathComponent("docs/original-object.txt")
+            try Data("original".utf8).write(to: replacementURL)
+            if let replacementRequest = (await shell.execute("rm replacement.txt")).deletionConfirmationRequest {
+                try fileManager.moveItem(at: replacementURL, to: originalURL)
+                try Data("new object".utf8).write(to: replacementURL)
+                let replacementResult = await shell.confirmDeletion(replacementRequest)
+                expect(replacementResult.outputLines == ["Error: deletion request expired"], "rm confirmation expires after same-path file replacement", &failures)
+            } else {
+                failures.append("replacement rm produces a confirmation request")
+            }
+            expect(fileManager.fileExists(atPath: replacementURL.path), "stale rm cannot delete a replacement object", &failures)
+            expect(fileManager.fileExists(atPath: originalURL.path), "stale rm preserves the renamed original object", &failures)
+
+            let guardedDirectory = root.appendingPathComponent("docs/guarded", isDirectory: true)
+            let relocatedDirectory = root.appendingPathComponent("docs/relocated", isDirectory: true)
+            try fileManager.createDirectory(at: guardedDirectory, withIntermediateDirectories: false)
+            let guardedFile = guardedDirectory.appendingPathComponent("same-object.txt")
+            try Data("same object".utf8).write(to: guardedFile)
+            if let symlinkRequest = (await shell.execute("rm guarded/same-object.txt")).deletionConfirmationRequest {
+                try fileManager.moveItem(at: guardedDirectory, to: relocatedDirectory)
+                try fileManager.createSymbolicLink(at: guardedDirectory, withDestinationURL: relocatedDirectory)
+                let symlinkResult = await shell.confirmDeletion(symlinkRequest)
+                expect(symlinkResult.outputLines == ["Error: deletion request expired"], "rm confirmation expires after intermediate-directory symlink replacement", &failures)
+            } else {
+                failures.append("intermediate-symlink rm produces a confirmation request")
+            }
+            expect(
+                fileManager.fileExists(atPath: relocatedDirectory.appendingPathComponent("same-object.txt").path),
+                "rm cannot follow a replaced intermediate directory symlink even to the same file identity",
+                &failures
+            )
+
+            let symlinkTargetURL = root.appendingPathComponent("docs/symlink-target.txt")
+            let symlinkRelocatedURL = root.appendingPathComponent("docs/symlink-relocated.txt")
+            try Data("same object".utf8).write(to: symlinkTargetURL)
+            if let targetSymlinkRequest = (await shell.execute("rm symlink-target.txt")).deletionConfirmationRequest {
+                try fileManager.moveItem(at: symlinkTargetURL, to: symlinkRelocatedURL)
+                try fileManager.createSymbolicLink(at: symlinkTargetURL, withDestinationURL: symlinkRelocatedURL)
+                let targetSymlinkResult = await shell.confirmDeletion(targetSymlinkRequest)
+                expect(targetSymlinkResult.outputLines == ["Error: deletion request expired"], "rm confirmation expires after target symlink replacement", &failures)
+            } else {
+                failures.append("target-symlink rm produces a confirmation request")
+            }
+            expect(
+                (try? fileManager.destinationOfSymbolicLink(atPath: symlinkTargetURL.path)) == symlinkRelocatedURL.path,
+                "rm cannot remove a target symlink substituted after confirmation request",
+                &failures
+            )
+            expect(fileManager.fileExists(atPath: symlinkRelocatedURL.path), "rm target-symlink rejection preserves the original object", &failures)
         } catch {
             failures.append("local shell runner fixture can be created: \(error)")
         }
@@ -362,6 +413,17 @@ struct LiteTermCoreTestRunner {
         let listing = await shell.execute("ls")
 
         expect(listing.outputLines == ["coordinated-entry"], "local shell uses its injected file access boundary", &failures)
+
+        let mismatchFileSystem = RunnerIdentityMismatchFileSystem()
+        let mismatchShell = LocalShell(rootURL: root, fileSystem: mismatchFileSystem)
+        if let request = (await mismatchShell.execute("rm target.txt")).deletionConfirmationRequest {
+            let result = await mismatchShell.confirmDeletion(request)
+            expect(result.outputLines == ["Error: deletion request expired"], "local shell fails closed on an injected coordinated identity mismatch", &failures)
+        } else {
+            failures.append("injected identity mismatch produces a confirmation request")
+        }
+        expect(mismatchFileSystem.revalidationCallCount == 1, "local shell delegates confirmation to one revalidation/removal boundary", &failures)
+        expect(!mismatchFileSystem.didDelete, "identity mismatch boundary performs no deletion", &failures)
     }
 
     private static func checkRemoteOutputSanitization(_ failures: inout [String]) {
@@ -513,6 +575,24 @@ struct LiteTermCoreTestRunner {
         expect(navigation.navigateHistory(.previous) == [.replaceLine(Array("pwd".utf8))], "repeated Local Up recalls older history", &failures)
         expect(navigation.navigateHistory(.next) == [.replaceLine(Array("ls".utf8))], "Local Down advances history", &failures)
         expect(navigation.navigateHistory(.next) == [.replaceLine([])], "Local Down returns to an empty input line", &failures)
+
+        var exactControlBudget = LocalTerminalInputReducer(maximumEventsPerReduction: 2)
+        expect(
+            exactControlBudget.reduce([UInt8(ascii: "a"), 0x03]) == [.echo([UInt8(ascii: "a")]), .interrupt],
+            "Local echo and interrupt consume their exact aggregate event budget",
+            &failures
+        )
+        var insufficientControlBudget = LocalTerminalInputReducer(maximumEventsPerReduction: 1)
+        let boundedControlEvents = insufficientControlBudget.reduce([UInt8(ascii: "a"), 0x03])
+        expect(boundedControlEvents == [.echo([UInt8(ascii: "a")])], "Local interrupt is not partially applied beyond its event budget", &failures)
+        expect(boundedControlEvents.count <= 1, "Local interrupt path never exceeds the event cap", &failures)
+        expect(insufficientControlBudget.reduce([0x03]) == [.interrupt], "Local interrupt remains deterministic after an insufficient batch budget", &failures)
+
+        var insufficientEraseBudget = LocalTerminalInputReducer(maximumEventsPerReduction: 1)
+        let boundedEraseEvents = insufficientEraseBudget.reduce([UInt8(ascii: "a"), 0x7F])
+        expect(boundedEraseEvents == [.echo([UInt8(ascii: "a")])], "Local erase is not partially applied beyond its event budget", &failures)
+        expect(boundedEraseEvents.count <= 1, "Local erase path never exceeds the event cap", &failures)
+        expect(insufficientEraseBudget.reduce([0x7F]) == [.erase], "Local erase remains deterministic after an insufficient batch budget", &failures)
     }
 
     private static func checkCoordinatedPathInspection(_ failures: inout [String]) async {
@@ -597,6 +677,45 @@ struct LiteTermCoreTestRunner {
             "local operation queue runs resumed input only after transition",
             &failures
         )
+
+        let boundedQueue = LocalOperationQueue(maximumPendingOperations: 3, maximumPendingCost: 6)
+        let boundedGate = RunnerDelayedOperationGate()
+        let boundedRecorder = RunnerOperationRecorder()
+        var input = LocalTerminalInputReducer()
+        var acceptedCount = 0
+        var rejectedCount = 0
+        for index in 0..<12 {
+            for event in input.reduce(Array("x\(index % 10)\r".utf8)) {
+                guard case .submit(let command) = event else { continue }
+                if boundedQueue.enqueue(operationCost: command.utf8.count, {
+                    if index == 0 {
+                        await boundedGate.wait()
+                    }
+                    await boundedRecorder.append(command)
+                }) {
+                    acceptedCount += 1
+                } else {
+                    rejectedCount += 1
+                }
+            }
+        }
+        await boundedGate.waitUntilStarted()
+        expect(acceptedCount == 3 && rejectedCount == 9, "local operation queue rejects repeated submits beyond its aggregate limits", &failures)
+        expect(boundedQueue.pendingOperationCount == 3, "local operation queue bounds retained operation count", &failures)
+        expect(boundedQueue.pendingOperationCost == 6, "local operation queue bounds retained command bytes", &failures)
+        let boundedDrain = Task { @MainActor in await boundedQueue.suspendAndDrain() }
+        while boundedQueue.isAccepting { await Task.yield() }
+        expect(!boundedQueue.enqueue(operationCost: 1, {}), "bounded queue rejects work while draining", &failures)
+        await boundedGate.release()
+        await boundedDrain.value
+        expect(boundedQueue.pendingOperationCount == 0 && boundedQueue.pendingOperationCost == 0, "bounded queue releases all reservations after drain", &failures)
+        let boundedDrainedValues = await boundedRecorder.values()
+        expect(boundedDrainedValues.count == 3, "bounded queue executes only accepted submits", &failures)
+        boundedQueue.resume()
+        expect(boundedQueue.enqueue(operationCost: 6, { await boundedRecorder.append("resumed") }), "bounded queue accepts work deterministically after resume", &failures)
+        await boundedQueue.suspendAndDrain()
+        let boundedResumedValues = await boundedRecorder.values()
+        expect(boundedResumedValues.last == "resumed", "bounded queue completes resumed work", &failures)
         return failures
     }
 
@@ -622,6 +741,18 @@ struct LiteTermCoreTestRunner {
                 username: "bob",
                 authenticationKind: .generatedKey,
                 reconnectPreference: .disabled
+            )
+            let hostData = try JSONEncoder().encode(first)
+            let hostObject = try JSONSerialization.jsonObject(with: hostData) as? [String: Any]
+            let exactHostKeys: Set<String> = [
+                "id", "label", "hostname", "port", "username",
+                "authenticationKind", "reconnectPreference"
+            ]
+            let serializedHostKeys = Set(hostObject?.keys.map { $0 } ?? [])
+            expect(
+                serializedHostKeys == exactHostKeys,
+                "SSHHost serialization contains exactly the allowed metadata keys",
+                &failures
             )
             let repository = HostRepository(fileURL: fileURL)
             try repository.save([first, second])
@@ -1360,7 +1491,10 @@ private struct RunnerFileSystem: LocalFileSystemAccess {
     func touch(at url: URL) throws {}
     func copyItem(from source: URL, to destination: URL) throws {}
     func moveItem(from source: URL, to destination: URL) throws {}
-    func removeFile(at url: URL) throws {}
+    func deletionIdentity(at url: URL) throws -> LocalFileIdentity { throw LocalFileSystemError.fileIdentityUnavailable }
+    func revalidateAndRemoveFile(rootURL: URL, rootRelativePath: String, expectedIdentity: LocalFileIdentity) throws {
+        throw LocalFileSystemError.deletionRequestExpired
+    }
 }
 
 private struct RunnerInspectingFileSystem: LocalFileSystemAccess {
@@ -1379,7 +1513,32 @@ private struct RunnerInspectingFileSystem: LocalFileSystemAccess {
     func touch(at url: URL) throws {}
     func copyItem(from source: URL, to destination: URL) throws {}
     func moveItem(from source: URL, to destination: URL) throws {}
-    func removeFile(at url: URL) throws {}
+    func deletionIdentity(at url: URL) throws -> LocalFileIdentity { throw LocalFileSystemError.fileIdentityUnavailable }
+    func revalidateAndRemoveFile(rootURL: URL, rootRelativePath: String, expectedIdentity: LocalFileIdentity) throws {
+        throw LocalFileSystemError.deletionRequestExpired
+    }
+}
+
+private final class RunnerIdentityMismatchFileSystem: LocalFileSystemAccess, @unchecked Sendable {
+    private(set) var revalidationCallCount = 0
+    private(set) var didDelete = false
+
+    func symbolicLinkDestination(at url: URL) throws -> String? { nil }
+    func isDirectory(at url: URL) throws -> Bool { false }
+    func list(at url: URL) throws -> [String] { [] }
+    func readText(at url: URL) throws -> String { "" }
+    func prepareForEditing(at url: URL) throws {}
+    func createDirectory(at url: URL) throws {}
+    func touch(at url: URL) throws {}
+    func copyItem(from source: URL, to destination: URL) throws {}
+    func moveItem(from source: URL, to destination: URL) throws {}
+    func deletionIdentity(at url: URL) throws -> LocalFileIdentity {
+        LocalFileIdentity(resourceIdentifier: Data([0x01]))
+    }
+    func revalidateAndRemoveFile(rootURL: URL, rootRelativePath: String, expectedIdentity: LocalFileIdentity) throws {
+        revalidationCallCount += 1
+        throw LocalFileSystemError.deletionRequestExpired
+    }
 }
 
 private actor RunnerDelayedOperationGate {

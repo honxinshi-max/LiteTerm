@@ -37,7 +37,7 @@ final class TerminalSessionCoordinator: ObservableObject {
 
     private weak var terminalView: TerminalView?
     private var localShell: LocalShell
-    private let localOperationQueue = LocalOperationQueue()
+    private let localOperationQueue: LocalOperationQueue
     private var localInputReducer = LocalTerminalInputReducer()
     private var shortcutReducer = ShortcutInputReducer()
     private var remoteOutputSanitizer = RemoteOutputSanitizer()
@@ -52,12 +52,17 @@ final class TerminalSessionCoordinator: ObservableObject {
 
     var activeWorkspaceID: String { flowState.activeWorkspaceID }
 
-    init(rootURL: URL, coordinateFileAccess: Bool = false) {
+    init(
+        rootURL: URL,
+        coordinateFileAccess: Bool = false,
+        localOperationQueue: LocalOperationQueue? = nil
+    ) {
         let fileSystem: (any LocalFileSystemAccess)? = coordinateFileAccess
             ? CoordinatedLocalFileSystem(rootURL: rootURL)
             : nil
         localShell = LocalShell(rootURL: rootURL, fileSystem: fileSystem)
         flowState = TerminalFlowStateReducer(initialWorkspaceID: rootURL.path)
+        self.localOperationQueue = localOperationQueue ?? LocalOperationQueue()
     }
 
     func attachTerminalView(_ view: TerminalView) {
@@ -161,13 +166,18 @@ final class TerminalSessionCoordinator: ObservableObject {
         routeInput(bytes)
     }
 
-    func runLocalCommand(_ command: String) {
+    @discardableResult
+    func runLocalCommand(_ command: String) -> Bool {
         let shell = localShell
         let generation = flowState.generation
-        localOperationQueue.enqueue { [weak self] in
+        let accepted = localOperationQueue.enqueue(operationCost: command.utf8.count) { [weak self] in
             let execution = await shell.execute(command)
             await self?.present(execution, shell: shell, generation: generation)
         }
+        if !accepted {
+            presentLocalQueueBusy(generation: generation)
+        }
+        return accepted
     }
 
     @discardableResult
@@ -192,7 +202,10 @@ final class TerminalSessionCoordinator: ObservableObject {
         }
         self.pendingDeletion = nil
         onDeletionConfirmationChanged?(nil)
-        localOperationQueue.enqueue { [weak self] in
+        let requestCost = request.rootRelativePath.utf8.count
+            + (request.fileIdentity.resourceIdentifier?.count ?? 0)
+            + 32
+        let accepted = localOperationQueue.enqueue(operationCost: requestCost) { [weak self] in
             let execution = await pendingDeletion.shell.confirmDeletion(request)
             await self?.present(
                 execution,
@@ -200,14 +213,23 @@ final class TerminalSessionCoordinator: ObservableObject {
                 generation: pendingDeletion.generation
             )
         }
+        if !accepted {
+            presentLocalQueueBusy(generation: pendingDeletion.generation)
+        }
     }
 
     func cancelDeletion(_ request: DeletionConfirmationRequest) {
         guard let pendingDeletion, pendingDeletion.request == request else { return }
         self.pendingDeletion = nil
         onDeletionConfirmationChanged?(nil)
-        localOperationQueue.enqueue {
+        let requestCost = request.rootRelativePath.utf8.count
+            + (request.fileIdentity.resourceIdentifier?.count ?? 0)
+            + 32
+        let accepted = localOperationQueue.enqueue(operationCost: requestCost) {
             await pendingDeletion.shell.cancelDeletion(request)
+        }
+        if !accepted {
+            presentLocalQueueBusy(generation: pendingDeletion.generation)
         }
     }
 
@@ -278,8 +300,11 @@ final class TerminalSessionCoordinator: ObservableObject {
             case .interrupt:
                 terminalView?.feed(text: "^C\r\n")
                 let generation = flowState.generation
-                localOperationQueue.enqueue { [weak self] in
+                let accepted = localOperationQueue.enqueue { [weak self] in
                     await self?.presentPrompt(generation: generation)
+                }
+                if !accepted {
+                    presentLocalQueueBusy(generation: generation)
                 }
             case let .replaceLine(replacement):
                 terminalView?.feed(text: "\r\u{1B}[2K$ ")
@@ -324,6 +349,15 @@ final class TerminalSessionCoordinator: ObservableObject {
             flowState.generation == generation
         else { return }
         terminalView?.feed(text: "$ ")
+    }
+
+    private func presentLocalQueueBusy(generation: UInt64) {
+        guard
+            mode == .local,
+            flowState.activeMode == .local,
+            flowState.generation == generation
+        else { return }
+        terminalView?.feed(text: "Error: Local command queue is busy\r\n$ ")
     }
 
     private func publishShortcutState() {

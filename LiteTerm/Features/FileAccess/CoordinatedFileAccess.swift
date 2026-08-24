@@ -176,9 +176,33 @@ struct CoordinatedLocalFileSystem: LocalFileSystemAccess {
         try resolve(result, coordinationError: coordinationError)
     }
 
-    func removeFile(at url: URL) throws {
-        try coordinateWrite(at: url, options: .forDeleting) {
-            try directFileSystem.removeFile(at: $0)
+    func deletionIdentity(at url: URL) throws -> LocalFileIdentity {
+        try coordinateRead(at: url) { try directFileSystem.deletionIdentity(at: $0) }
+    }
+
+    func revalidateAndRemoveFile(
+        rootURL: URL,
+        rootRelativePath: String,
+        expectedIdentity: LocalFileIdentity
+    ) throws {
+        let pathComponents = rootRelativePath.split(separator: "/", omittingEmptySubsequences: true)
+        guard !pathComponents.isEmpty else {
+            throw LocalFileSystemError.deletionRequestExpired
+        }
+        let targetURL = pathComponents.reduce(rootURL) { partialURL, component in
+            partialURL.appendingPathComponent(String(component))
+        }
+
+        try coordinateWrite(at: targetURL, options: .forDeleting) { coordinatedTargetURL in
+            let coordinatedRootURL = pathComponents.reduce(coordinatedTargetURL) { partialURL, _ in
+                partialURL.deletingLastPathComponent()
+            }
+            let coordinatedFileSystem = LocalFileSystem(rootURL: coordinatedRootURL)
+            try coordinatedFileSystem.revalidateAndRemoveFile(
+                rootURL: coordinatedRootURL,
+                rootRelativePath: rootRelativePath,
+                expectedIdentity: expectedIdentity
+            )
         }
     }
 

@@ -3,10 +3,19 @@ import Foundation
 public struct DeletionConfirmationRequest: Equatable, Identifiable, Sendable {
     public let id: UUID
     public let targetURL: URL
+    public let rootRelativePath: String
+    public let fileIdentity: LocalFileIdentity
 
-    public init(id: UUID = UUID(), targetURL: URL) {
+    public init(
+        id: UUID = UUID(),
+        targetURL: URL,
+        rootRelativePath: String,
+        fileIdentity: LocalFileIdentity
+    ) {
         self.id = id
         self.targetURL = targetURL
+        self.rootRelativePath = rootRelativePath
+        self.fileIdentity = fileIdentity
     }
 }
 
@@ -77,7 +86,11 @@ public actor LocalShell {
         }
         pendingDeletionRequest = nil
         do {
-            try fileSystem.removeFile(at: request.targetURL)
+            try fileSystem.revalidateAndRemoveFile(
+                rootURL: rootURL,
+                rootRelativePath: request.rootRelativePath,
+                expectedIdentity: request.fileIdentity
+            )
             return ShellExecution()
         } catch {
             return ShellExecution(outputLines: [message(for: error)])
@@ -131,7 +144,15 @@ public actor LocalShell {
             guard try !fileSystem.isDirectory(at: target) else {
                 throw LocalFileSystemError.directoryRemoval
             }
-            let request = DeletionConfirmationRequest(targetURL: target)
+            let rootRelativePath = try resolver.rootRelativePath(for: target)
+            guard !rootRelativePath.isEmpty else {
+                throw LocalFileSystemError.workspaceRootRemoval
+            }
+            let request = DeletionConfirmationRequest(
+                targetURL: target,
+                rootRelativePath: rootRelativePath,
+                fileIdentity: try fileSystem.deletionIdentity(at: target)
+            )
             pendingDeletionRequest = request
             return ShellExecution(deletionConfirmationRequest: request)
         case .clear:
@@ -151,6 +172,8 @@ public actor LocalShell {
             return "Error: file is not valid UTF-8 text"
         case LocalFileSystemError.notRegularFile:
             return "Error: target is not a regular file"
+        case LocalFileSystemError.deletionRequestExpired:
+            return "Error: deletion request expired"
         case LocalFileSystemError.workspaceRootRemoval:
             return "Error: workspace root cannot be removed"
         case LocalFileSystemError.directoryRemoval:
