@@ -7,12 +7,20 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0327616B24775DF2D1361D3C /* ShellCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49D525A47BC6813063807CD8 /* ShellCommand.swift */; };
+		05CDEED92A07C332232621B6 /* ShellCommandParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BB038111532AACB404B7298 /* ShellCommandParser.swift */; };
 		104BA56A53CCFB6FB835F688 /* TerminalHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AA2E5BF53176CB47F0C1964 /* TerminalHistory.swift */; };
+		2AE2F998A7C21F75AC2CCBAD /* WorkspacePathResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E90C6527F9B4C77603876D8 /* WorkspacePathResolver.swift */; };
+		5EFDC99385FA4BDC3006D0B3 /* ShellCommandParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB5536F4DBE9FF721AF9BC2F /* ShellCommandParserTests.swift */; };
 		62C2B0CBCED680D1AFD476E2 /* TerminalHistoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 452B537F25559C036D55F19B /* TerminalHistoryTests.swift */; };
 		648350DC115E933137351836 /* ControlKeyEncoderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 884EF7D7DD778E21AB0A0335 /* ControlKeyEncoderTests.swift */; };
 		6F43CCF0EF3185A8E652C03A /* LiteTermCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 915C8CB2ED95014459B72635 /* LiteTermCore.framework */; };
+		7450A1BA64DB986459677D1A /* LocalShellTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E8BE604C8096B4560CB3A84 /* LocalShellTests.swift */; };
+		8A7914072EC3D9E800E4EFAF /* WorkspacePathResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB61486FD18544AE2E778DEB /* WorkspacePathResolverTests.swift */; };
+		8D2DC3029F79DF6365EFC3FA /* LocalFileSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 046694364C0593F3FA229B4A /* LocalFileSystem.swift */; };
 		95882C649421F1DF03B1ED74 /* LiteTermCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 915C8CB2ED95014459B72635 /* LiteTermCore.framework */; };
 		A2136F72581D56D5728EFDF6 /* ControlKeyEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DCA47FCC336DA1EC0CFA351 /* ControlKeyEncoder.swift */; };
+		B2E92DCA8BC5759A95D7940B /* LocalShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FE0D2895A0864F00D0336F2 /* LocalShell.swift */; };
 		B9BD2CE48A270BF77CB54DF6 /* LiteTermCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 915C8CB2ED95014459B72635 /* LiteTermCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		D2BBEAC5A01CAB89E82EC8FC /* LiteTermCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20E94BEF2728A50F0DC9F978 /* LiteTermCore.swift */; };
 		D4CC11904B259B8D06D93470 /* LiteTermCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 915C8CB2ED95014459B72635 /* LiteTermCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -68,15 +76,23 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		046694364C0593F3FA229B4A /* LocalFileSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalFileSystem.swift; sourceTree = "<group>"; };
 		20E94BEF2728A50F0DC9F978 /* LiteTermCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiteTermCore.swift; sourceTree = "<group>"; };
 		452B537F25559C036D55F19B /* TerminalHistoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHistoryTests.swift; sourceTree = "<group>"; };
+		49D525A47BC6813063807CD8 /* ShellCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellCommand.swift; sourceTree = "<group>"; };
+		5BB038111532AACB404B7298 /* ShellCommandParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellCommandParser.swift; sourceTree = "<group>"; };
+		5E90C6527F9B4C77603876D8 /* WorkspacePathResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacePathResolver.swift; sourceTree = "<group>"; };
+		6E8BE604C8096B4560CB3A84 /* LocalShellTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalShellTests.swift; sourceTree = "<group>"; };
 		884EF7D7DD778E21AB0A0335 /* ControlKeyEncoderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlKeyEncoderTests.swift; sourceTree = "<group>"; };
 		915C8CB2ED95014459B72635 /* LiteTermCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = LiteTermCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		96F44BE6C6AEF40D4A0D7D00 /* LiteTermCoreTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LiteTermCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9AA2E5BF53176CB47F0C1964 /* TerminalHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHistory.swift; sourceTree = "<group>"; };
 		9BF0787357DB945C6149B5A3 /* LiteTermUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LiteTermUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9DCA47FCC336DA1EC0CFA351 /* ControlKeyEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlKeyEncoder.swift; sourceTree = "<group>"; };
+		9FE0D2895A0864F00D0336F2 /* LocalShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalShell.swift; sourceTree = "<group>"; };
+		AB61486FD18544AE2E778DEB /* WorkspacePathResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacePathResolverTests.swift; sourceTree = "<group>"; };
 		CDF7B7A3F71AA5D2ED22028E /* LiteTerm.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LiteTerm.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		EB5536F4DBE9FF721AF9BC2F /* ShellCommandParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellCommandParserTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -103,7 +119,10 @@
 			isa = PBXGroup;
 			children = (
 				884EF7D7DD778E21AB0A0335 /* ControlKeyEncoderTests.swift */,
+				6E8BE604C8096B4560CB3A84 /* LocalShellTests.swift */,
+				EB5536F4DBE9FF721AF9BC2F /* ShellCommandParserTests.swift */,
 				452B537F25559C036D55F19B /* TerminalHistoryTests.swift */,
+				AB61486FD18544AE2E778DEB /* WorkspacePathResolverTests.swift */,
 			);
 			name = LiteTermCoreTests;
 			path = Tests/LiteTermCoreTests;
@@ -136,6 +155,18 @@
 			path = LiteTerm;
 			sourceTree = "<group>";
 		};
+		5AC3E9F54A35B8F6D7E6681B /* LocalShell */ = {
+			isa = PBXGroup;
+			children = (
+				046694364C0593F3FA229B4A /* LocalFileSystem.swift */,
+				9FE0D2895A0864F00D0336F2 /* LocalShell.swift */,
+				49D525A47BC6813063807CD8 /* ShellCommand.swift */,
+				5BB038111532AACB404B7298 /* ShellCommandParser.swift */,
+				5E90C6527F9B4C77603876D8 /* WorkspacePathResolver.swift */,
+			);
+			path = LocalShell;
+			sourceTree = "<group>";
+		};
 		5E4FDBD98F690CC99AC8EA08 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -151,6 +182,7 @@
 			isa = PBXGroup;
 			children = (
 				20E94BEF2728A50F0DC9F978 /* LiteTermCore.swift */,
+				5AC3E9F54A35B8F6D7E6681B /* LocalShell */,
 				1E8B96C5D19B5D4D0B007408 /* Terminal */,
 			);
 			name = LiteTermCore;
@@ -291,7 +323,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				648350DC115E933137351836 /* ControlKeyEncoderTests.swift in Sources */,
+				7450A1BA64DB986459677D1A /* LocalShellTests.swift in Sources */,
+				5EFDC99385FA4BDC3006D0B3 /* ShellCommandParserTests.swift in Sources */,
 				62C2B0CBCED680D1AFD476E2 /* TerminalHistoryTests.swift in Sources */,
+				8A7914072EC3D9E800E4EFAF /* WorkspacePathResolverTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -301,7 +336,12 @@
 			files = (
 				A2136F72581D56D5728EFDF6 /* ControlKeyEncoder.swift in Sources */,
 				D2BBEAC5A01CAB89E82EC8FC /* LiteTermCore.swift in Sources */,
+				8D2DC3029F79DF6365EFC3FA /* LocalFileSystem.swift in Sources */,
+				B2E92DCA8BC5759A95D7940B /* LocalShell.swift in Sources */,
+				0327616B24775DF2D1361D3C /* ShellCommand.swift in Sources */,
+				05CDEED92A07C332232621B6 /* ShellCommandParser.swift in Sources */,
 				104BA56A53CCFB6FB835F688 /* TerminalHistory.swift in Sources */,
+				2AE2F998A7C21F75AC2CCBAD /* WorkspacePathResolver.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
