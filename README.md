@@ -31,7 +31,7 @@ Direct packages are pinned by immutable revision in `project.yml`: SwiftTerm 1.1
 
 ## Portable candidate checks
 
-A Git remote is optional; this working repository currently has none configured. Remote presence or absence is informational, not a correctness gate. From the repository root:
+A Git remote is optional for portable checks. Remote presence or absence is informational, not a correctness gate. From the repository root:
 
 ```sh
 ./scripts/run-core-tests.sh
@@ -44,6 +44,10 @@ git diff --check
 `run-core-tests.sh` is the portable command that actually executes Core behavior. The default Swift package intentionally contains only Core and that runner; it contains no fake XCTest module and does not present standard XCTest as passed under Command Line Tools. In a toolchain where real XCTest is available, the explicit supplementary opt-in is `LITETERM_ENABLE_SWIFTPM_XCTESTS=1 swift test`. The Xcode project and shared scheme remain authoritative for full app/Core/SSH/UI tests. `verify-project.sh` performs read-only checks on tracked sources (Swift build output under `.build` is expected) and reports standard XCTest `OPEN/SKIP` in the portable environment. When full Xcode is selected it additionally runs a generic iOS Simulator `build-for-testing` with automatic package resolution disabled, requires the checked-in resolved versions, and verifies tracked/staged source state is unchanged afterward; without full Xcode that gate is explicitly `OPEN/SKIP`. Portable success is a candidate check, not a release pass.
 
 The app catalog includes a deterministic, opaque 1024×1024 single-size iOS `AppIcon` with no third-party artwork or font dependency. Portable checks validate its catalog mapping, PNG signature, dimensions, opacity, size, and target membership; only a full-Xcode asset-catalog build can prove `actool` acceptance.
+
+## Install on an iPad
+
+The GitHub repository contains source code, not an installable iPad app. iPadOS cannot enable or execute these Swift files from Files or iCloud Drive. Build and sign LiteTerm on a Mac with full Xcode: open `LiteTerm.xcodeproj`, sign in to an Apple Account in Xcode, select a development team under Signing & Capabilities, connect the iPad, choose it as the run destination, and use Product > Run. For repeatable beta distribution, archive a signed build and upload it to App Store Connect for TestFlight.
 
 ## Full Xcode, iPad, live SSH, and RSS gates
 
