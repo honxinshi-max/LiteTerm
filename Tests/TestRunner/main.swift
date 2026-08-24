@@ -13,6 +13,12 @@ struct LiteTermCoreTestRunner {
             return
         }
 
+        if CommandLine.arguments.contains("--host-credential-transactions") {
+            checkHostCredentialTransactions(&failures)
+            finish(failures, passingCheckCount: 1)
+            return
+        }
+
         checkHistoryDropsOldestLine(&failures)
         checkHistoryClear(&failures)
         checkZeroHistoryLimit(&failures)
@@ -668,6 +674,60 @@ struct LiteTermCoreTestRunner {
 
     private static func checkHostCredentialTransactions(_ failures: inout [String]) {
         do {
+            let replacementID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
+            let originalPasswordHost = try SSHHost(
+                id: replacementID,
+                label: "Original",
+                hostname: "old.example",
+                port: 22,
+                username: "old-user",
+                authenticationKind: .password,
+                reconnectPreference: .enabled
+            )
+            let editedPasswordHost = try SSHHost(
+                id: replacementID,
+                label: "Edited",
+                hostname: "new.example",
+                port: 2222,
+                username: "new-user",
+                authenticationKind: .password,
+                reconnectPreference: .disabled
+            )
+            let oldPassword = Data("old-password".utf8)
+            let replacementBeforeHost = try runnerHost(
+                id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!,
+                authenticationKind: .generatedKey
+            )
+            let replacementAfterHost = try runnerHost(
+                id: UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!,
+                authenticationKind: .generatedKey
+            )
+            let replacementOriginalHosts = [
+                replacementBeforeHost,
+                originalPasswordHost,
+                replacementAfterHost
+            ]
+            let replacementMetadata = RunnerHostMetadataStore(hosts: replacementOriginalHosts)
+            let replacementSecrets = RunnerHostSecretStore()
+            replacementSecrets.seed(oldPassword, for: replacementID, kind: .password)
+            replacementSecrets.failNextSetKinds = [.password]
+            let replacementCoordinator = HostCredentialCoordinator(
+                metadata: replacementMetadata,
+                secrets: replacementSecrets
+            )
+            let replacementFailure = replacementCoordinator.upsert(
+                editedPasswordHost,
+                password: Data("replacement-password".utf8),
+                in: replacementOriginalHosts
+            )
+            expect(replacementFailure.hosts == replacementOriginalHosts, "password replacement failure returns original ordered metadata", &failures)
+            expect(replacementMetadata.hosts == replacementOriginalHosts, "password replacement failure durably restores original ordered metadata", &failures)
+            expect(replacementSecrets.value(for: replacementID, kind: .password) == oldPassword, "password replacement failure preserves the previous password", &failures)
+            expect(replacementFailure.credentialStates[replacementID] == .ready, "successful password replacement compensation returns the original host healthy", &failures)
+            expect(!replacementMetadata.hosts.contains(editedPasswordHost), "restart cannot inspect edited metadata with the stale password", &failures)
+            expect(replacementCoordinator.inspect(replacementMetadata.hosts)[replacementID] == .ready, "restart inspection sees the coherent original host", &failures)
+            expect(replacementSecrets.value(for: replacementID, kind: .credentialRepair) == nil, "successful replacement compensation leaves no repair marker", &failures)
+
             let newPasswordHost = try runnerHost(authenticationKind: .password)
             let passwordMetadata = RunnerHostMetadataStore()
             let passwordSecrets = RunnerHostSecretStore()
@@ -681,12 +741,11 @@ struct LiteTermCoreTestRunner {
                 password: Data("credential".utf8),
                 in: []
             )
-            expect(passwordFailure.hosts == [newPasswordHost], "credential password failure keeps the new host visible", &failures)
-            expect(passwordMetadata.hosts == [newPasswordHost], "credential password failure persists visible metadata", &failures)
-            expect(passwordFailure.credentialStates[newPasswordHost.id] == .repairRequired, "credential password failure marks repair required", &failures)
+            expect(passwordFailure.hosts.isEmpty, "credential password failure restores the original empty list", &failures)
+            expect(passwordMetadata.hosts.isEmpty, "credential password failure durably restores original metadata", &failures)
+            expect(passwordFailure.credentialStates[newPasswordHost.id] == nil, "credential password failure does not claim an absent host healthy", &failures)
             expect(passwordFailure.failure == .secretMutation(.password), "credential password failure reports its secret kind", &failures)
             expect(passwordSecrets.hostIDsWithValues.isSubset(of: Set(passwordFailure.hosts.map(\.id))), "credential password failure creates no secret-only UUID", &failures)
-            expect(passwordCoordinator.inspect([newPasswordHost])[newPasswordHost.id] != .ready, "credential password failure remains non-healthy after restart inspection", &failures)
             passwordSecrets.failingSetKinds = []
             let passwordRetry = passwordCoordinator.upsert(newPasswordHost, password: Data("credential".utf8), in: passwordFailure.hosts)
             expect(passwordRetry.failure == nil && passwordRetry.credentialStates[newPasswordHost.id] == .ready, "credential password failure can be retried to ready", &failures)
@@ -700,10 +759,106 @@ struct LiteTermCoreTestRunner {
             keySecrets.failingDeleteKinds = [.privateKey]
             let keyCoordinator = HostCredentialCoordinator(metadata: keyMetadata, secrets: keySecrets)
             let keyFailure = keyCoordinator.upsert(passwordHost, password: Data("credential".utf8), in: [generatedHost])
-            expect(keyFailure.hosts == [passwordHost], "private-key cleanup failure keeps edited metadata visible", &failures)
-            expect(keyFailure.credentialStates[switchingID] == .repairRequired, "private-key cleanup failure marks repair required", &failures)
+            expect(keyFailure.hosts == [generatedHost] && keyMetadata.hosts == [generatedHost], "private-key cleanup failure restores original metadata", &failures)
+            expect(keyFailure.credentialStates[switchingID] == .ready, "private-key cleanup compensation restores the original host healthy", &failures)
             expect(keyFailure.failure == .secretMutation(.privateKey), "private-key cleanup failure identifies the failing kind", &failures)
+            expect(keySecrets.value(for: switchingID, kind: .password) == nil, "private-key cleanup compensation removes the new password", &failures)
+            expect(keySecrets.value(for: switchingID, kind: .privateKey) == Data("generated-key".utf8), "private-key cleanup compensation restores the old key", &failures)
             expect(keySecrets.hostIDsWithValues.isSubset(of: Set(keyFailure.hosts.map(\.id))), "private-key cleanup failure creates no secret-only UUID", &failures)
+
+            let compensationID = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
+            let compensationOldHost = try runnerHost(id: compensationID, authenticationKind: .generatedKey)
+            let compensationUpdatedHost = try runnerHost(id: compensationID, authenticationKind: .password)
+            let compensationMetadata = RunnerHostMetadataStore(hosts: [compensationOldHost])
+            let compensationSecrets = RunnerHostSecretStore()
+            compensationSecrets.seed(Data("old-key".utf8), for: compensationID, kind: .privateKey)
+            compensationSecrets.failNextDeleteKinds = [.privateKey]
+            compensationSecrets.failingDeleteKinds = [.password]
+            let compensationCoordinator = HostCredentialCoordinator(
+                metadata: compensationMetadata,
+                secrets: compensationSecrets
+            )
+            let compensationFailure = compensationCoordinator.upsert(
+                compensationUpdatedHost,
+                password: Data("new-password".utf8),
+                in: [compensationOldHost]
+            )
+            expect(compensationFailure.hosts == [compensationOldHost] && compensationMetadata.hosts == [compensationOldHost], "secret compensation failure still restores visible metadata", &failures)
+            expect(compensationFailure.credentialStates[compensationID] == .repairRequired, "secret compensation failure never claims the host ready", &failures)
+            expect(compensationFailure.failure == .compensationFailed(original: .privateKey, rollback: .secret(.password)), "secret compensation failure identifies both non-secret boundaries", &failures)
+            expect(compensationCoordinator.inspect(compensationMetadata.hosts)[compensationID] == .repairRequired, "secret compensation failure remains derived repair after restart", &failures)
+            expect(compensationSecrets.value(for: compensationID, kind: .credentialRepair) != nil, "secret compensation failure persists a repair marker", &failures)
+
+            let metadataRollbackID = UUID(uuidString: "44444444-4444-4444-4444-444444444444")!
+            let metadataRollbackOldHost = try SSHHost(
+                id: metadataRollbackID,
+                label: "Original",
+                hostname: "old.example",
+                port: 22,
+                username: "old-user",
+                authenticationKind: .password,
+                reconnectPreference: .enabled
+            )
+            let metadataRollbackUpdatedHost = try SSHHost(
+                id: metadataRollbackID,
+                label: "Edited",
+                hostname: "new.example",
+                port: 2222,
+                username: "new-user",
+                authenticationKind: .password,
+                reconnectPreference: .disabled
+            )
+            let metadataRollbackStore = RunnerHostMetadataStore(hosts: [metadataRollbackOldHost])
+            metadataRollbackStore.failingSaveCalls = [2]
+            let metadataRollbackSecrets = RunnerHostSecretStore()
+            metadataRollbackSecrets.seed(Data("old-password".utf8), for: metadataRollbackID, kind: .password)
+            metadataRollbackSecrets.failNextSetKinds = [.password]
+            let metadataRollbackCoordinator = HostCredentialCoordinator(
+                metadata: metadataRollbackStore,
+                secrets: metadataRollbackSecrets
+            )
+            let metadataRollbackFailure = metadataRollbackCoordinator.upsert(
+                metadataRollbackUpdatedHost,
+                password: Data("new-password".utf8),
+                in: [metadataRollbackOldHost]
+            )
+            expect(metadataRollbackFailure.hosts == [metadataRollbackUpdatedHost] && metadataRollbackStore.hosts == [metadataRollbackUpdatedHost], "metadata compensation failure keeps persisted edited metadata visible", &failures)
+            expect(metadataRollbackFailure.credentialStates[metadataRollbackID] == .repairRequired, "metadata compensation failure never claims the persisted host ready", &failures)
+            expect(metadataRollbackFailure.failure == .compensationFailed(original: .password, rollback: .metadata), "metadata compensation failure identifies the metadata boundary", &failures)
+            expect(metadataRollbackSecrets.value(for: metadataRollbackID, kind: .credentialRepair) != nil, "metadata compensation failure persists a repair marker", &failures)
+            expect(metadataRollbackCoordinator.inspect(metadataRollbackStore.hosts)[metadataRollbackID] == .repairRequired, "metadata compensation failure remains repair-required after restart", &failures)
+
+            let multipleFailureID = UUID(uuidString: "55555555-5555-5555-5555-555555555555")!
+            let multipleFailureOldHost = try runnerHost(id: multipleFailureID, authenticationKind: .generatedKey)
+            let multipleFailureUpdatedHost = try runnerHost(id: multipleFailureID, authenticationKind: .password)
+            let multipleFailureMetadata = RunnerHostMetadataStore(hosts: [multipleFailureOldHost])
+            multipleFailureMetadata.failingSaveCalls = [2]
+            let multipleFailureSecrets = RunnerHostSecretStore()
+            multipleFailureSecrets.seed(Data("old-key".utf8), for: multipleFailureID, kind: .privateKey)
+            multipleFailureSecrets.failNextDeleteKinds = [.privateKey]
+            multipleFailureSecrets.failingDeleteKinds = [.password]
+            let multipleFailureCoordinator = HostCredentialCoordinator(
+                metadata: multipleFailureMetadata,
+                secrets: multipleFailureSecrets
+            )
+            let multipleFailure = multipleFailureCoordinator.upsert(
+                multipleFailureUpdatedHost,
+                password: Data("new-password".utf8),
+                in: [multipleFailureOldHost]
+            )
+            expect(multipleFailure.hosts == [multipleFailureUpdatedHost] && multipleFailureMetadata.hosts == [multipleFailureUpdatedHost], "multiple compensation failures keep persisted metadata visible", &failures)
+            expect(multipleFailure.failure == .compensationFailed(original: .privateKey, rollback: .multiple([.secret(.password), .metadata])), "multiple compensation failures report every non-secret boundary", &failures)
+            expect(multipleFailureCoordinator.inspect(multipleFailureMetadata.hosts)[multipleFailureID] == .repairRequired, "multiple compensation failures remain repair-required after restart", &failures)
+
+            let repairHost = try runnerHost(authenticationKind: .password)
+            let repairMetadata = RunnerHostMetadataStore(hosts: [repairHost])
+            let repairSecrets = RunnerHostSecretStore()
+            repairSecrets.seed(Data("old-password".utf8), for: repairHost.id, kind: .password)
+            repairSecrets.seed(Data([1]), for: repairHost.id, kind: .credentialRepair)
+            let repairCoordinator = HostCredentialCoordinator(metadata: repairMetadata, secrets: repairSecrets)
+            let repaired = repairCoordinator.upsert(repairHost, password: Data("new-password".utf8), in: [repairHost])
+            expect(repaired.failure == nil && repaired.credentialStates[repairHost.id] == .ready, "successful upsert clears repair-required state", &failures)
+            expect(repairSecrets.value(for: repairHost.id, kind: .credentialRepair) == nil, "successful upsert removes the durable repair marker", &failures)
 
             for failingKind in HostSecretKind.allCases {
                 let host = try runnerHost(authenticationKind: .password)
@@ -735,6 +890,27 @@ struct LiteTermCoreTestRunner {
             expect(upsertFailure.hosts.isEmpty, "upsert metadata failure keeps the prior visible list", &failures)
             expect(upsertFailure.failure == .metadataSave, "upsert metadata failure reports metadata boundary", &failures)
             expect(upsertSecrets.mutationCount == 0 && upsertSecrets.hostIDsWithValues.isEmpty, "upsert metadata failure creates no secret-only UUID", &failures)
+
+            let existingSaveFailureHost = try runnerHost(authenticationKind: .password)
+            let existingSaveFailureMetadata = RunnerHostMetadataStore(hosts: [existingSaveFailureHost])
+            existingSaveFailureMetadata.saveShouldFail = true
+            let existingSaveFailureSecrets = RunnerHostSecretStore()
+            let existingOldPassword = Data("old-password".utf8)
+            existingSaveFailureSecrets.seed(existingOldPassword, for: existingSaveFailureHost.id, kind: .password)
+            let existingSaveFailureCoordinator = HostCredentialCoordinator(
+                metadata: existingSaveFailureMetadata,
+                secrets: existingSaveFailureSecrets
+            )
+            let existingSaveFailure = existingSaveFailureCoordinator.upsert(
+                existingSaveFailureHost,
+                password: Data("new-password".utf8),
+                in: [existingSaveFailureHost]
+            )
+            expect(existingSaveFailure.hosts == [existingSaveFailureHost] && existingSaveFailureMetadata.hosts == [existingSaveFailureHost], "existing-host metadata failure preserves original visible metadata", &failures)
+            expect(existingSaveFailure.failure == .metadataSave && existingSaveFailure.credentialStates[existingSaveFailureHost.id] == .repairRequired, "existing-host metadata failure returns repair-required", &failures)
+            expect(existingSaveFailureSecrets.value(for: existingSaveFailureHost.id, kind: .password) == existingOldPassword, "existing-host metadata failure preserves the old password", &failures)
+            expect(existingSaveFailureSecrets.value(for: existingSaveFailureHost.id, kind: .credentialRepair) != nil, "existing-host metadata failure leaves a durable repair marker", &failures)
+            expect(existingSaveFailureCoordinator.inspect(existingSaveFailureMetadata.hosts)[existingSaveFailureHost.id] == .repairRequired, "existing-host metadata failure remains repair-required after restart", &failures)
 
             let deleteMetadata = RunnerHostMetadataStore(hosts: [saveFailureHost])
             deleteMetadata.saveShouldFail = true
@@ -862,13 +1038,16 @@ private enum RunnerHostStoreFailure: Error {
 private final class RunnerHostMetadataStore: HostMetadataStoring {
     var hosts: [SSHHost]
     var saveShouldFail = false
+    var failingSaveCalls: Set<Int> = []
+    private(set) var saveCallCount = 0
 
     init(hosts: [SSHHost] = []) {
         self.hosts = hosts
     }
 
     func save(_ hosts: [SSHHost]) throws {
-        guard !saveShouldFail else {
+        saveCallCount += 1
+        guard !saveShouldFail, !failingSaveCalls.contains(saveCallCount) else {
             throw RunnerHostStoreFailure.injected
         }
         self.hosts = hosts
@@ -882,7 +1061,9 @@ private final class RunnerHostSecretStore: HostSecretStoring {
     }
 
     var failingSetKinds: Set<HostSecretKind> = []
+    var failNextSetKinds: Set<HostSecretKind> = []
     var failingDeleteKinds: Set<HostSecretKind> = []
+    var failNextDeleteKinds: Set<HostSecretKind> = []
     private(set) var mutationCount = 0
     private var values: [Key: Data] = [:]
 
@@ -894,8 +1075,15 @@ private final class RunnerHostSecretStore: HostSecretStoring {
         values[Key(hostID: hostID, kind: kind)] = data
     }
 
+    func value(for hostID: UUID, kind: HostSecretKind) -> Data? {
+        values[Key(hostID: hostID, kind: kind)]
+    }
+
     func set(_ data: Data, for hostID: UUID, kind: HostSecretKind) throws {
         mutationCount += 1
+        if failNextSetKinds.remove(kind) != nil {
+            throw RunnerHostStoreFailure.injected
+        }
         guard !failingSetKinds.contains(kind) else {
             throw RunnerHostStoreFailure.injected
         }
@@ -908,6 +1096,9 @@ private final class RunnerHostSecretStore: HostSecretStoring {
 
     func delete(for hostID: UUID, kind: HostSecretKind) throws {
         mutationCount += 1
+        if failNextDeleteKinds.remove(kind) != nil {
+            throw RunnerHostStoreFailure.injected
+        }
         guard !failingDeleteKinds.contains(kind) else {
             throw RunnerHostStoreFailure.injected
         }

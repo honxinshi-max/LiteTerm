@@ -14,7 +14,7 @@ enum HostStoreError: Error, LocalizedError {
         case .repositoryUnavailable:
             return "Host metadata cannot be changed until the damaged hosts file is repaired."
         case .credentialTransactionFailed:
-            return "The host remains visible, but its credential change needs repair. Retry the operation."
+            return "The credential change was not committed. Retry the operation; any host requiring repair remains visible."
         }
     }
 }
