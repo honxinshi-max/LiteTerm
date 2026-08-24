@@ -22,6 +22,7 @@ public enum SSHConnectionState: Equatable, Sendable {
 public enum SSHConnectionEvent: Equatable, Sendable {
     case hostKeyValidationRequired
     case hostKeyValidated
+    case hostKeyRevalidated
     case authenticationSucceeded
     case reconnecting(attempt: Int)
     case failed(SSHFailureCategory)
@@ -67,13 +68,18 @@ public struct SSHConnectionStateReducer: Sendable {
         let nextState: SSHConnectionState
         switch (state, event) {
         case (.connecting, .hostKeyValidationRequired),
-             (.reconnecting, .hostKeyValidationRequired):
+             (.reconnecting, .hostKeyValidationRequired),
+             (.connected, .hostKeyValidationRequired),
+             (.awaitingHostTrust, .hostKeyValidationRequired):
             nextState = .awaitingHostTrust
 
         case (.connecting, .hostKeyValidated),
              (.awaitingHostTrust, .hostKeyValidated),
              (.reconnecting, .hostKeyValidated):
             nextState = .authenticating
+
+        case (.awaitingHostTrust, .hostKeyRevalidated):
+            nextState = .connected
 
         case (.authenticating, .authenticationSucceeded):
             nextState = .connected

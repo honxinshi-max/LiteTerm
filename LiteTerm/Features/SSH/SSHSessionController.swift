@@ -9,6 +9,7 @@ struct SSHHostTrustRequest: Identifiable, Equatable {
     let fingerprint: String
     let kind: SSHHostTrustKind
     let generation: UInt64
+    let resumeConnectedSession: Bool
 
     var id: String {
         "\(generation):\(hostID.uuidString):\(fingerprint)"
@@ -18,6 +19,7 @@ struct SSHHostTrustRequest: Identifiable, Equatable {
 @MainActor
 final class SSHSessionController: ObservableObject {
     typealias ClientFactory = (LiteTermSSHClientConfiguration) -> any SSHClientTransport
+    typealias ReconnectSleep = @Sendable (Duration) async throws -> Void
 
     @Published private(set) var state: SSHConnectionState = .disconnected
     @Published private(set) var activeHostID: UUID?
@@ -27,6 +29,7 @@ final class SSHSessionController: ObservableObject {
     private let keyManager: Ed25519KeyManager
     private let terminalSession: TerminalSessionCoordinator
     private let clientFactory: ClientFactory
+    private let reconnectSleep: ReconnectSleep
 
     private var reducer = SSHConnectionStateReducer()
     private var reconnect = SSHReconnectOrchestrator(isEnabled: false)
@@ -36,16 +39,21 @@ final class SSHSessionController: ObservableObject {
     private var closingClientCount = 0
     private var deferredStart: (host: SSHHost, generation: UInt64)?
     private var terminalDimensions = SSHTerminalDimensions.fallback
+    private var sceneIsActive = false
 
     init(
         secrets: any HostSecretStoring,
         terminalSession: TerminalSessionCoordinator,
-        clientFactory: @escaping ClientFactory = { SSHClient(configuration: $0) }
+        clientFactory: @escaping ClientFactory = { SSHClient(configuration: $0) },
+        reconnectSleep: @escaping ReconnectSleep = { duration in
+            try await Task.sleep(for: duration)
+        }
     ) {
         self.secrets = secrets
         keyManager = Ed25519KeyManager(secrets: secrets)
         self.terminalSession = terminalSession
         self.clientFactory = clientFactory
+        self.reconnectSleep = reconnectSleep
     }
 
     func connect(host: SSHHost) {
@@ -62,14 +70,22 @@ final class SSHSessionController: ObservableObject {
             isEnabled: host.reconnectPreference == .enabled
         )
         reconnect.userInitiatedConnection()
+        if !sceneIsActive {
+            _ = reconnect.scenePhaseChanged(isActive: false)
+        }
+        terminalDimensions = terminalSession.currentTerminalSize
 
-        let generation = reducer.beginConnection()
+        let generation = sceneIsActive
+            ? reducer.beginConnection()
+            : reducer.disconnect()
         publishState()
 
         if let previousClient {
             retire(previousClient)
         }
-        startClient(for: host, generation: generation)
+        if sceneIsActive {
+            startClient(for: host, generation: generation)
+        }
     }
 
     func disconnect() {
@@ -133,10 +149,12 @@ final class SSHSessionController: ObservableObject {
     func scenePhaseChanged(_ phase: ScenePhase) {
         switch phase {
         case .active:
+            sceneIsActive = true
             guard let directive = reconnect.scenePhaseChanged(isActive: true) else { return }
             scheduleReconnect(directive)
 
         case .inactive, .background:
+            sceneIsActive = false
             _ = reconnect.scenePhaseChanged(isActive: false)
             retryTask?.cancel()
             retryTask = nil
@@ -159,7 +177,8 @@ final class SSHSessionController: ObservableObject {
         guard
             reducer.generation == generation,
             currentHost?.id == host.id,
-            client == nil
+            client == nil,
+            sceneIsActive
         else {
             return
         }
@@ -171,9 +190,9 @@ final class SSHSessionController: ObservableObject {
 
         do {
             let credential = try credential(for: host)
-            let trustedFingerprint = try secrets
-                .data(for: host.id, kind: .trustedFingerprint)
-                .flatMap { String(data: $0, encoding: .utf8) }
+            let storedFingerprint = SSHStoredHostFingerprint.classify(
+                storedData: try secrets.data(for: host.id, kind: .trustedFingerprint)
+            )
             let callbacks = SSHClientCallbacks(
                 hostTrustRequired: { [weak self] fingerprint, kind in
                     Task { @MainActor [weak self] in
@@ -195,8 +214,9 @@ final class SSHSessionController: ObservableObject {
                         self?.terminalReady(generation: generation)
                     }
                 },
-                receiveBytes: { [weak self] bytes in
+                receiveBytes: { [weak self] bytes, acknowledge in
                     Task { @MainActor [weak self] in
+                        defer { acknowledge() }
                         guard let self, self.reducer.generation == generation else { return }
                         self.terminalSession.receiveRemoteBytes(bytes)
                     }
@@ -210,7 +230,7 @@ final class SSHSessionController: ObservableObject {
             let configuration = LiteTermSSHClientConfiguration(
                 host: host,
                 credential: credential,
-                trustedFingerprint: trustedFingerprint,
+                storedFingerprint: storedFingerprint,
                 terminalDimensions: terminalDimensions,
                 callbacks: callbacks
             )
@@ -245,6 +265,8 @@ final class SSHSessionController: ObservableObject {
         host: SSHHost,
         generation: UInt64
     ) {
+        let resumeConnectedSession = pendingHostTrust?.resumeConnectedSession
+            ?? (reducer.state == .connected)
         guard
             currentHost?.id == host.id,
             reducer.reduce(.hostKeyValidationRequired, generation: generation)
@@ -256,13 +278,17 @@ final class SSHSessionController: ObservableObject {
             hostLabel: host.label,
             fingerprint: fingerprint,
             kind: kind,
-            generation: generation
+            generation: generation,
+            resumeConnectedSession: resumeConnectedSession
         )
         publishState()
     }
 
     private func hostKeyValidated(generation: UInt64) {
-        guard reducer.reduce(.hostKeyValidated, generation: generation) else { return }
+        let event: SSHConnectionEvent = pendingHostTrust?.resumeConnectedSession == true
+            ? .hostKeyRevalidated
+            : .hostKeyValidated
+        guard reducer.reduce(event, generation: generation) else { return }
         pendingHostTrust = nil
         publishState()
     }
@@ -299,13 +325,14 @@ final class SSHSessionController: ObservableObject {
     }
 
     private func scheduleReconnect(_ directive: SSHReconnectDirective) {
-        guard let host = currentHost else { return }
+        guard let host = currentHost, sceneIsActive else { return }
         retryTask?.cancel()
         let generation = reducer.beginReconnect(attempt: directive.attempt)
         publishState()
+        let reconnectSleep = reconnectSleep
         retryTask = Task { @MainActor [weak self] in
             do {
-                try await Task.sleep(for: directive.delay)
+                try await reconnectSleep(directive.delay)
             } catch {
                 return
             }
@@ -313,7 +340,8 @@ final class SSHSessionController: ObservableObject {
                 let self,
                 !Task.isCancelled,
                 self.reducer.generation == generation,
-                self.currentHost?.id == host.id
+                self.currentHost?.id == host.id,
+                self.sceneIsActive
             else {
                 return
             }

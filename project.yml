@@ -76,6 +76,25 @@ targets:
       base:
         TARGETED_DEVICE_FAMILY: "2"
 
+  LiteTermSSHTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests/LiteTermSSHTests
+    dependencies:
+      - target: LiteTerm
+      - package: SwiftNIOSSH
+        product: NIOSSH
+      - package: SwiftNIO
+        product: NIOEmbedded
+      - package: SwiftNIO
+        product: NIOConcurrencyHelpers
+      - package: SwiftCrypto
+        product: Crypto
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "2"
+
   LiteTermUITests:
     type: bundle.ui-testing
     platform: iOS

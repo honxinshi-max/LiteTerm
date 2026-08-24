@@ -19,6 +19,26 @@ enum SSHClientCredential: Sendable {
     case generatedKey(NIOSSHPrivateKey)
 }
 
+enum SSHStoredHostFingerprint: Equatable, Sendable {
+    case absent
+    case valid(String)
+    case corrupt
+
+    static func classify(storedData: Data?) -> Self {
+        guard let storedData else { return .absent }
+        guard
+            let fingerprint = String(data: storedData, encoding: .utf8),
+            KnownHostPolicy.evaluate(
+                savedFingerprint: fingerprint,
+                presentedFingerprint: fingerprint
+            ) == .trusted
+        else {
+            return .corrupt
+        }
+        return .valid(fingerprint)
+    }
+}
+
 enum SSHClientFailure: Equatable, Sendable {
     case transport
     case authenticationRejected
@@ -49,14 +69,17 @@ struct SSHClientCallbacks: Sendable {
     let hostTrustRequired: @Sendable (String, SSHHostTrustKind) -> Void
     let hostKeyValidated: @Sendable () -> Void
     let terminalReady: @Sendable () -> Void
-    let receiveBytes: @Sendable ([UInt8]) -> Void
+    let receiveBytes: @Sendable (
+        [UInt8],
+        @escaping @Sendable () -> Void
+    ) -> Void
     let connectionClosed: @Sendable (SSHClientFailure) -> Void
 }
 
 struct LiteTermSSHClientConfiguration: Sendable {
     let host: SSHHost
     let credential: SSHClientCredential
-    let trustedFingerprint: String?
+    let storedFingerprint: SSHStoredHostFingerprint
     let terminalDimensions: SSHTerminalDimensions
     let callbacks: SSHClientCallbacks
 }

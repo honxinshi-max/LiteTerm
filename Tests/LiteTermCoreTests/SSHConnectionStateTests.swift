@@ -60,6 +60,19 @@ final class SSHConnectionStateTests: XCTestCase {
         XCTAssertEqual(reducer.state, .authenticating)
     }
 
+    func testConnectedRekeyTrustReturnsToConnected() {
+        var reducer = SSHConnectionStateReducer()
+        let generation = reducer.beginConnection()
+        XCTAssertEqual(reducer.reduce(.hostKeyValidated, generation: generation), true)
+        XCTAssertEqual(reducer.reduce(.authenticationSucceeded, generation: generation), true)
+        XCTAssertEqual(reducer.state, .connected)
+
+        XCTAssertEqual(reducer.reduce(.hostKeyValidationRequired, generation: generation), true)
+        XCTAssertEqual(reducer.state, .awaitingHostTrust)
+        XCTAssertEqual(reducer.reduce(.hostKeyRevalidated, generation: generation), true)
+        XCTAssertEqual(reducer.state, .connected)
+    }
+
     func testReconnectOrchestratorUsesExactlyThreeForegroundDelays() {
         var orchestrator = SSHReconnectOrchestrator(isEnabled: true)
         orchestrator.userInitiatedConnection()

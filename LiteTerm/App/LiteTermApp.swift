@@ -8,7 +8,7 @@ struct LiteTermApp: App {
     var body: some Scene {
         WindowGroup {
             TerminalScreen(model: model)
-                .onChange(of: scenePhase) { _, newPhase in
+                .onChange(of: scenePhase, initial: true) { _, newPhase in
                     switch newPhase {
                     case .active:
                         model.didBecomeActive()

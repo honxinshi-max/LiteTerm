@@ -46,7 +46,7 @@ final class SSHClient: SSHClientTransport, @unchecked Sendable {
         initialResources.terminalDimensions = configuration.terminalDimensions
         resources = NIOLockedValueBox(initialResources)
         hostKeyValidator = SSHHostKeyValidator(
-            trustedFingerprint: configuration.trustedFingerprint,
+            storedFingerprint: configuration.storedFingerprint,
             onTrustRequired: configuration.callbacks.hostTrustRequired,
             onValidated: configuration.callbacks.hostKeyValidated
         )
@@ -168,8 +168,12 @@ final class SSHClient: SSHClientTransport, @unchecked Sendable {
                 onReady: { [weak self] in
                     self?.callbacks.terminalReady()
                 },
-                onBytes: { [weak self] bytes in
-                    self?.callbacks.receiveBytes(bytes)
+                onBytes: { [weak self] bytes, acknowledge in
+                    guard let self else {
+                        acknowledge()
+                        return
+                    }
+                    self.callbacks.receiveBytes(bytes, acknowledge)
                 },
                 onError: { [weak self] error in
                     self?.fail(error)
@@ -178,7 +182,9 @@ final class SSHClient: SSHClientTransport, @unchecked Sendable {
                     self?.beginShutdown(failure: .transport, completion: nil)
                 }
             )
-            return childChannel.pipeline.addHandler(terminalHandler)
+            return childChannel.setOption(ChannelOptions.autoRead, value: false).flatMap {
+                childChannel.pipeline.addHandler(terminalHandler)
+            }
         }
         promise.futureResult.whenFailure { [weak self] error in
             self?.fail(error)
@@ -203,7 +209,7 @@ final class SSHClient: SSHClientTransport, @unchecked Sendable {
 
     private func registerChildChannel(_ channel: Channel) -> Bool {
         resources.withLockedValue { state in
-            guard !state.shutdownStarted else { return false }
+            guard !state.shutdownStarted, state.childChannel == nil else { return false }
             state.childChannel = channel
             return true
         }
@@ -343,6 +349,7 @@ private final class SSHParentEventHandler: ChannelInboundHandler, @unchecked Sen
 
     private let sshHandler: NIOSSHHandler
     private weak var client: SSHClient?
+    private var childCreationGate = SSHChildSessionCreationGate()
 
     init(sshHandler: NIOSSHHandler, client: SSHClient) {
         self.sshHandler = sshHandler
@@ -351,6 +358,8 @@ private final class SSHParentEventHandler: ChannelInboundHandler, @unchecked Sen
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         if event is UserAuthSuccessEvent {
+            precondition(context.eventLoop.inEventLoop)
+            guard childCreationGate.claim() else { return }
             client?.authenticated(using: sshHandler, on: context.channel)
             return
         }

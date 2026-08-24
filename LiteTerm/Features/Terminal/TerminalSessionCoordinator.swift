@@ -28,6 +28,7 @@ final class TerminalSessionCoordinator: ObservableObject {
     @Published private(set) var mode: TerminalMode = .local
     @Published private(set) var isControlLatched = false
     @Published private(set) var remoteStatus: RemoteTerminalStatus = .disconnected
+    private(set) var currentTerminalSize = SSHTerminalDimensions.fallback
 
     var onRemoteInput: RemoteInputHandler?
     var onRemoteResize: RemoteResizeHandler?
@@ -149,8 +150,9 @@ final class TerminalSessionCoordinator: ObservableObject {
     }
 
     func terminalSizeChanged(columns: Int, rows: Int) {
+        currentTerminalSize = SSHTerminalDimensions(columns: columns, rows: rows)
         guard mode == .ssh else { return }
-        onRemoteResize?(columns, rows)
+        onRemoteResize?(currentTerminalSize.columns, currentTerminalSize.rows)
     }
 
     func updateRemoteStatus(_ status: RemoteTerminalStatus) {

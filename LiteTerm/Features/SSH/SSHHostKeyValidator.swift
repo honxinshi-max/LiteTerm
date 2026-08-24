@@ -25,7 +25,7 @@ final class SSHHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unch
     }
 
     private struct State {
-        var trustedFingerprint: String?
+        var storedFingerprint: SSHStoredHostFingerprint
         var pending: PendingValidation?
     }
 
@@ -34,11 +34,11 @@ final class SSHHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unch
     private let onValidated: @Sendable () -> Void
 
     init(
-        trustedFingerprint: String?,
+        storedFingerprint: SSHStoredHostFingerprint,
         onTrustRequired: @escaping @Sendable (String, SSHHostTrustKind) -> Void,
         onValidated: @escaping @Sendable () -> Void
     ) {
-        state = NIOLockedValueBox(State(trustedFingerprint: trustedFingerprint, pending: nil))
+        state = NIOLockedValueBox(State(storedFingerprint: storedFingerprint, pending: nil))
         self.onTrustRequired = onTrustRequired
         self.onValidated = onValidated
     }
@@ -55,11 +55,21 @@ final class SSHHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unch
             return
         }
 
-        let decision = state.withLockedValue {
-            KnownHostPolicy.evaluate(
-                savedFingerprint: $0.trustedFingerprint,
-                presentedFingerprint: fingerprint
-            )
+        let decision = state.withLockedValue { state in
+            switch state.storedFingerprint {
+            case .absent:
+                return KnownHostPolicy.evaluate(
+                    savedFingerprint: nil,
+                    presentedFingerprint: fingerprint
+                )
+            case .valid(let savedFingerprint):
+                return KnownHostPolicy.evaluate(
+                    savedFingerprint: savedFingerprint,
+                    presentedFingerprint: fingerprint
+                )
+            case .corrupt:
+                return .mismatch
+            }
         }
 
         switch decision {
@@ -88,7 +98,7 @@ final class SSHHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unch
         let pending = state.withLockedValue { state -> PendingValidation? in
             guard let pending = state.pending else { return nil }
             state.pending = nil
-            state.trustedFingerprint = pending.fingerprint
+            state.storedFingerprint = .valid(pending.fingerprint)
             return pending
         }
         guard let pending else { return }

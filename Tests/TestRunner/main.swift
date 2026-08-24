@@ -1111,6 +1111,11 @@ struct LiteTermCoreTestRunner {
         expect(reducer.reduce(.hostKeyValidated, generation: generation), "trusted host key begins authentication", &failures)
         expect(reducer.reduce(.authenticationSucceeded, generation: generation), "authenticated SSH session connects", &failures)
 
+        expect(reducer.reduce(.hostKeyValidationRequired, generation: generation), "connected rekey pauses for explicit replacement trust", &failures)
+        expect(reducer.state == .awaitingHostTrust, "rekey trust is observable", &failures)
+        expect(reducer.reduce(.hostKeyRevalidated, generation: generation), "confirmed rekey resumes the connected session", &failures)
+        expect(reducer.state == .connected, "confirmed rekey does not restart user authentication", &failures)
+
         let reconnectGeneration = reducer.beginReconnect(attempt: 1)
         expect(reconnectGeneration > generation, "SSH reconnect advances the session generation", &failures)
         expect(!reducer.reduce(.failed(.transport), generation: generation), "reconnect rejects the prior attempt callback", &failures)
