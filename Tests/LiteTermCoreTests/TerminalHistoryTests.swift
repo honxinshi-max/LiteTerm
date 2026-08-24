@@ -2,6 +2,14 @@ import XCTest
 @testable import LiteTermCore
 
 final class TerminalHistoryTests: XCTestCase {
+    func testSingleHistoryEntryIsBounded() {
+        var history = TerminalHistory(limit: 2)
+
+        history.append(String(repeating: "a", count: 65_537))
+
+        XCTAssertEqual(history.lines.first?.utf8.count, 65_536)
+    }
+
     func testAppendDropsOldestLineBeyondLimit() {
         var history = TerminalHistory(limit: 2)
         history.append("one")

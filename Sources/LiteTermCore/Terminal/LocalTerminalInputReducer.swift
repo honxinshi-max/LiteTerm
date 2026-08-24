@@ -6,6 +6,8 @@ public enum LocalTerminalInputEvent: Equatable, Sendable {
 }
 
 public struct LocalTerminalInputReducer: Sendable {
+    private static let maximumInputBytes = 64 * 1024
+
     private var input: [UInt8] = []
     private var didReceiveCarriageReturn = false
 
@@ -68,8 +70,10 @@ public struct LocalTerminalInputReducer: Sendable {
                 submit()
 
             default:
-                input.append(byte)
-                echoRun.append(byte)
+                if input.count < Self.maximumInputBytes {
+                    input.append(byte)
+                    echoRun.append(byte)
+                }
             }
         }
 

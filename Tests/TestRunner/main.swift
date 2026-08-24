@@ -29,6 +29,7 @@ struct LiteTermCoreTestRunner {
         checkHistoryClear(&failures)
         checkZeroHistoryLimit(&failures)
         checkOversizedHistoryLimit(&failures)
+        checkOversizedHistoryEntry(&failures)
         checkControlLettersAndBracket(&failures)
         checkControlUppercasing(&failures)
         checkUnsupportedControlCharacters(&failures)
@@ -44,6 +45,7 @@ struct LiteTermCoreTestRunner {
         await checkInjectedFileAccessBoundary(&failures)
         checkRemoteOutputSanitization(&failures)
         checkLocalTerminalInputOrdering(&failures)
+        checkLocalTerminalInputBound(&failures)
         await checkCoordinatedPathInspection(&failures)
         failures.append(contentsOf: await checkLocalOperationQueue())
         checkHostRepository(&failures)
@@ -52,8 +54,9 @@ struct LiteTermCoreTestRunner {
         checkHostCredentialTransactions(&failures)
 
         checkSSHConnectionStateAndReconnect(&failures)
+        await checkAcceptanceFlow(&failures)
 
-        finish(failures, passingCheckCount: 26)
+        finish(failures, passingCheckCount: 29)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -87,6 +90,16 @@ struct LiteTermCoreTestRunner {
         expect(history.lines.count == 2_000, "oversized history limit is capped at 2,000 lines", &failures)
         expect(history.lines.first == "1", "oversized history drops its oldest line", &failures)
         expect(history.lines.last == "2000", "oversized history retains its newest line", &failures)
+    }
+
+    private static func checkOversizedHistoryEntry(_ failures: inout [String]) {
+        var history = TerminalHistory(limit: 2)
+        history.append(String(repeating: "a", count: 65_537))
+        expect(
+            history.lines.first?.utf8.count == 65_536,
+            "one history entry is bounded to 64 KiB",
+            &failures
+        )
     }
 
     private static func checkControlLettersAndBracket(_ failures: inout [String]) {
@@ -420,6 +433,28 @@ struct LiteTermCoreTestRunner {
             "local input flushes printable runs before controls",
             &failures
         )
+    }
+
+    private static func checkLocalTerminalInputBound(_ failures: inout [String]) {
+        var reducer = LocalTerminalInputReducer()
+        let oversized = Array(repeating: UInt8(ascii: "a"), count: 65_537)
+        let pasteEvents = reducer.reduce(oversized)
+        let echoedByteCount = pasteEvents.reduce(into: 0) { count, event in
+            if case .echo(let bytes) = event {
+                count += bytes.count
+            }
+        }
+        expect(echoedByteCount == 65_536, "Local paste echo is bounded to 64 KiB", &failures)
+
+        _ = reducer.reduce([0x7F])
+        _ = reducer.reduce([UInt8(ascii: "b")])
+        let submitEvents = reducer.reduce([0x0D])
+        guard case .submit(let command) = submitEvents.last else {
+            failures.append("bounded Local input remains submittable")
+            return
+        }
+        expect(command.utf8.count == 65_536, "Local command buffer is bounded to 64 KiB", &failures)
+        expect(command.last == "b", "backspace releases Local input capacity", &failures)
     }
 
     private static func checkCoordinatedPathInspection(_ failures: inout [String]) async {
@@ -1152,6 +1187,76 @@ struct LiteTermCoreTestRunner {
             secureStop.userInitiatedConnection()
             expect(secureStop.connectionFailed(failure) == nil, "security failure schedules no reconnect", &failures)
             expect(!secureStop.wantsConnection, "security failure cancels reconnect intent", &failures)
+        }
+    }
+
+    private static func checkAcceptanceFlow(_ failures: inout [String]) async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-Acceptance-\(UUID().uuidString)", isDirectory: true)
+
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+            var flow = TerminalFlowStateReducer(initialWorkspaceID: root.path)
+            let shell = LocalShell(rootURL: root)
+
+            flow.selectLocalWorkspace(id: root.path)
+            expect(flow.activeMode == .local, "acceptance starts in Local mode", &failures)
+            expect(flow.activeTerminalSessionCount == 1, "acceptance starts with one terminal session", &failures)
+            expect(flow.activeSSHConnectionCount == 0, "acceptance starts without SSH", &failures)
+
+            let touch = await shell.execute("touch draft.txt")
+            let initialListing = await shell.execute("ls")
+            let emptyContent = await shell.execute("cat draft.txt")
+            expect(touch.outputLines.isEmpty, "acceptance touch succeeds", &failures)
+            expect(initialListing.outputLines == ["draft.txt"], "acceptance ls sees the touched file", &failures)
+            expect(emptyContent.outputLines.isEmpty, "acceptance cat reads the empty file", &failures)
+
+            let edit = await shell.execute("edit draft.txt")
+            guard let editorURL = edit.editorURL else {
+                failures.append("acceptance edit produces a native editor intent")
+                return
+            }
+            try Data("edited on iPad\n".utf8).write(to: editorURL)
+            let editedContent = await shell.execute("cat draft.txt")
+            expect(
+                editedContent.outputLines == ["edited on iPad", ""],
+                "acceptance cat reads the edited file",
+                &failures
+            )
+
+            let host = try runnerHost(authenticationKind: .password)
+            flow.selectSSHHost(id: host.id)
+            var ssh = SSHConnectionStateReducer()
+            let sshGeneration = ssh.beginConnection()
+            expect(
+                flow.beginSSHConnection(generation: sshGeneration, state: ssh.state),
+                "acceptance connects the selected SSH host",
+                &failures
+            )
+            expect(flow.activeMode == .ssh, "acceptance switches to SSH mode", &failures)
+            expect(flow.activeTerminalSessionCount == 1, "SSH replaces Local as the one terminal session", &failures)
+            expect(flow.activeSSHConnectionCount == 1, "acceptance has one SSH connection", &failures)
+
+            expect(ssh.reduce(.hostKeyValidated, generation: sshGeneration), "acceptance validates the SSH host key", &failures)
+            expect(flow.updateSSHConnectionState(ssh.state, generation: sshGeneration), "acceptance observes SSH authentication", &failures)
+            expect(ssh.reduce(.authenticationSucceeded, generation: sshGeneration), "acceptance authenticates SSH", &failures)
+            expect(flow.updateSSHConnectionState(ssh.state, generation: sshGeneration), "acceptance observes connected SSH", &failures)
+
+            let remoteCommand = Array("pwd\r".utf8)
+            expect(flow.routeRemoteInput(remoteCommand) == remoteCommand, "acceptance sends input only to connected SSH", &failures)
+
+            _ = ssh.disconnect()
+            flow.disconnectSSH()
+            expect(flow.activeSSHConnectionCount == 0, "acceptance disconnect removes the SSH connection", &failures)
+            expect(flow.routeRemoteInput(remoteCommand) == nil, "disconnected SSH rejects input", &failures)
+
+            flow.returnToLocal()
+            expect(flow.activeMode == .local, "acceptance returns to Local mode", &failures)
+            expect(flow.activeTerminalSessionCount == 1, "Local return keeps one terminal session", &failures)
+            let localReturnListing = await shell.execute("ls")
+            expect(localReturnListing.outputLines == ["draft.txt"], "Local return retains the selected workspace", &failures)
+        } catch {
+            failures.append("acceptance flow completes with real temporary files: \(error)")
         }
     }
 

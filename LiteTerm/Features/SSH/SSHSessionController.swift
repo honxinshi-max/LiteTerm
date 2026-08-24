@@ -66,6 +66,7 @@ final class SSHSessionController: ObservableObject {
         pendingHostTrust = nil
         currentHost = host
         activeHostID = host.id
+        terminalSession.selectSSHHost(host.id)
         reconnect = SSHReconnectOrchestrator(
             isEnabled: host.reconnectPreference == .enabled
         )
@@ -78,6 +79,11 @@ final class SSHSessionController: ObservableObject {
         let generation = sceneIsActive
             ? reducer.beginConnection()
             : reducer.disconnect()
+        if sceneIsActive {
+            terminalSession.beginSSHConnection(generation: generation, state: reducer.state)
+        } else {
+            terminalSession.disconnectSSH()
+        }
         publishState()
 
         if let previousClient {
@@ -97,6 +103,7 @@ final class SSHSessionController: ObservableObject {
         currentHost = nil
         activeHostID = nil
         _ = reducer.disconnect()
+        terminalSession.disconnectSSH()
         publishState()
 
         let previousClient = client
@@ -163,6 +170,7 @@ final class SSHSessionController: ObservableObject {
             let previousClient = client
             client = nil
             _ = reducer.disconnect()
+            terminalSession.disconnectSSH()
             publishState()
             if let previousClient {
                 retire(previousClient)
@@ -328,6 +336,7 @@ final class SSHSessionController: ObservableObject {
         guard let host = currentHost, sceneIsActive else { return }
         retryTask?.cancel()
         let generation = reducer.beginReconnect(attempt: directive.attempt)
+        terminalSession.beginSSHConnection(generation: generation, state: reducer.state)
         publishState()
         let reconnectSleep = reconnectSleep
         retryTask = Task { @MainActor [weak self] in
@@ -376,6 +385,7 @@ final class SSHSessionController: ObservableObject {
 
     private func publishState() {
         state = reducer.state
+        terminalSession.updateSSHConnectionState(state, generation: reducer.generation)
         let status: RemoteTerminalStatus
         switch state {
         case .disconnected:

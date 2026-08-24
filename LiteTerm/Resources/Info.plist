@@ -23,7 +23,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>LiteTerm connects directly to SSH hosts that you choose on your local network.</string>
+	<string>LiteTerm uses your local network only when you connect to an SSH host you chose, such as a Mac on your LAN.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations~ipad</key>

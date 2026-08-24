@@ -7,6 +7,13 @@ struct TerminalScreen: View {
         NavigationStack {
             VStack(spacing: 0) {
                 controls
+                Text("Local commands can access only App Documents or a folder you choose in Files.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
+                    .accessibilityIdentifier("Files access scope")
                 TerminalViewRepresentable(session: model.terminalSession)
                     .background(Color(red: 0.035, green: 0.043, blue: 0.055))
                     .clipShape(RoundedRectangle(cornerRadius: 12))

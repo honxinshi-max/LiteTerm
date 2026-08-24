@@ -1,5 +1,6 @@
 public struct TerminalHistory: Sendable {
     private static let maximumLineCount = 2_000
+    private static let maximumLineBytes = 64 * 1024
 
     private let limit: Int
     private var buffer: [String?]
@@ -26,11 +27,13 @@ public struct TerminalHistory: Sendable {
             return
         }
 
+        let boundedLine = Self.bounded(line)
+
         if count < limit {
-            buffer[(startIndex + count) % limit] = line
+            buffer[(startIndex + count) % limit] = boundedLine
             count += 1
         } else {
-            buffer[startIndex] = line
+            buffer[startIndex] = boundedLine
             startIndex = (startIndex + 1) % limit
         }
     }
@@ -39,5 +42,17 @@ public struct TerminalHistory: Sendable {
         buffer = Array(repeating: nil, count: limit)
         startIndex = 0
         count = 0
+    }
+
+    private static func bounded(_ line: String) -> String {
+        guard line.utf8.count > maximumLineBytes else { return line }
+        var bytes = Array(line.utf8.prefix(maximumLineBytes))
+        while !bytes.isEmpty {
+            if let bounded = String(bytes: bytes, encoding: .utf8) {
+                return bounded
+            }
+            bytes.removeLast()
+        }
+        return ""
     }
 }

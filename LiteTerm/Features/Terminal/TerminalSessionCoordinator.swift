@@ -41,7 +41,7 @@ final class TerminalSessionCoordinator: ObservableObject {
     private var shortcutReducer = ShortcutInputReducer()
     private var remoteOutputSanitizer = RemoteOutputSanitizer()
     private var didPresentLocalPrompt = false
-    private var localGeneration = 0
+    private var flowState: TerminalFlowStateReducer
     private var isLocalInputSuspended = false
 
     init(rootURL: URL, coordinateFileAccess: Bool = false) {
@@ -49,6 +49,7 @@ final class TerminalSessionCoordinator: ObservableObject {
             ? CoordinatedLocalFileSystem(rootURL: rootURL)
             : nil
         localShell = LocalShell(rootURL: rootURL, fileSystem: fileSystem)
+        flowState = TerminalFlowStateReducer(initialWorkspaceID: rootURL.path)
     }
 
     func attachTerminalView(_ view: TerminalView) {
@@ -66,7 +67,12 @@ final class TerminalSessionCoordinator: ObservableObject {
     func setMode(_ newMode: TerminalMode) {
         guard mode != newMode else { return }
         mode = newMode
-        localGeneration += 1
+        switch newMode {
+        case .local:
+            flowState.returnToLocal()
+        case .ssh:
+            break
+        }
         localInputReducer.reset()
         shortcutReducer = ShortcutInputReducer()
         remoteOutputSanitizer = RemoteOutputSanitizer()
@@ -95,7 +101,7 @@ final class TerminalSessionCoordinator: ObservableObject {
             ? CoordinatedLocalFileSystem(rootURL: rootURL)
             : nil
         localShell = LocalShell(rootURL: rootURL, fileSystem: fileSystem)
-        localGeneration += 1
+        flowState.selectLocalWorkspace(id: rootURL.path)
         localInputReducer.reset()
         if mode == .local {
             terminalView?.feed(text: "\r\n$ ")
@@ -135,7 +141,7 @@ final class TerminalSessionCoordinator: ObservableObject {
 
     func runLocalCommand(_ command: String) {
         let shell = localShell
-        let generation = localGeneration
+        let generation = flowState.generation
         localOperationQueue.enqueue { [weak self] in
             let execution = await shell.execute(command)
             await self?.present(execution, generation: generation)
@@ -147,6 +153,22 @@ final class TerminalSessionCoordinator: ObservableObject {
         let sanitized = remoteOutputSanitizer.sanitize(bytes)
         guard !sanitized.isEmpty else { return }
         terminalView?.feed(byteArray: sanitized[...])
+    }
+
+    func selectSSHHost(_ hostID: UUID) {
+        flowState.selectSSHHost(id: hostID)
+    }
+
+    func beginSSHConnection(generation: UInt64, state: SSHConnectionState) {
+        _ = flowState.beginSSHConnection(generation: generation, state: state)
+    }
+
+    func updateSSHConnectionState(_ state: SSHConnectionState, generation: UInt64) {
+        _ = flowState.updateSSHConnectionState(state, generation: generation)
+    }
+
+    func disconnectSSH() {
+        flowState.disconnectSSH()
     }
 
     func terminalSizeChanged(columns: Int, rows: Int) {
@@ -169,7 +191,8 @@ final class TerminalSessionCoordinator: ObservableObject {
             guard !isLocalInputSuspended else { return }
             processLocalInput(bytes)
         case .ssh:
-            onRemoteInput?(bytes)
+            guard let routed = flowState.routeRemoteInput(bytes) else { return }
+            onRemoteInput?(routed)
         }
     }
 
@@ -197,8 +220,12 @@ final class TerminalSessionCoordinator: ObservableObject {
         }
     }
 
-    private func present(_ execution: ShellExecution, generation: Int) {
-        guard mode == .local, localGeneration == generation else { return }
+    private func present(_ execution: ShellExecution, generation: UInt64) {
+        guard
+            mode == .local,
+            flowState.activeMode == .local,
+            flowState.generation == generation
+        else { return }
         if execution.clearRequested {
             terminalView?.feed(text: "\u{1B}[2J\u{1B}[3J\u{1B}[H")
         }
@@ -211,8 +238,12 @@ final class TerminalSessionCoordinator: ObservableObject {
         terminalView?.feed(text: "$ ")
     }
 
-    private func presentPrompt(generation: Int) {
-        guard mode == .local, localGeneration == generation else { return }
+    private func presentPrompt(generation: UInt64) {
+        guard
+            mode == .local,
+            flowState.activeMode == .local,
+            flowState.generation == generation
+        else { return }
         terminalView?.feed(text: "$ ")
     }
 
