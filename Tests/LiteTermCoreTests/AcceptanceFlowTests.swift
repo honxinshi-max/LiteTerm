@@ -3,7 +3,7 @@ import XCTest
 @testable import LiteTermCore
 
 final class AcceptanceFlowTests: XCTestCase {
-    func testRealLocalSSHLocalFlowKeepsOneActiveTerminalSession() async throws {
+    func testRealLocalSSHLocalFlowModelKeepsOneActiveMode() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("LiteTerm-Acceptance-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
@@ -13,7 +13,6 @@ final class AcceptanceFlowTests: XCTestCase {
 
         flow.selectLocalWorkspace(id: root.path)
         XCTAssertEqual(flow.activeMode, .local)
-        XCTAssertEqual(flow.activeTerminalSessionCount, 1)
         XCTAssertEqual(flow.activeSSHConnectionCount, 0)
 
         let touch = await shell.execute("touch draft.txt")
@@ -44,7 +43,6 @@ final class AcceptanceFlowTests: XCTestCase {
         let sshGeneration = ssh.beginConnection()
         XCTAssertEqual(flow.beginSSHConnection(generation: sshGeneration, state: ssh.state), true)
         XCTAssertEqual(flow.activeMode, .ssh)
-        XCTAssertEqual(flow.activeTerminalSessionCount, 1)
         XCTAssertEqual(flow.activeSSHConnectionCount, 1)
 
         XCTAssertEqual(ssh.reduce(.hostKeyValidated, generation: sshGeneration), true)
@@ -63,7 +61,6 @@ final class AcceptanceFlowTests: XCTestCase {
 
         flow.returnToLocal()
         XCTAssertEqual(flow.activeMode, .local)
-        XCTAssertEqual(flow.activeTerminalSessionCount, 1)
         XCTAssertEqual(flow.activeSSHConnectionCount, 0)
         let localReturnListing = await shell.execute("ls")
         XCTAssertEqual(localReturnListing.outputLines, ["draft.txt"])

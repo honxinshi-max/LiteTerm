@@ -5,7 +5,7 @@ import XCTest
 final class LocalShellTests: XCTestCase {
     private let fileManager = FileManager.default
 
-    func testShellCreatesListsReadsCopiesMovesAndRemovesOneFile() async throws {
+    func testShellCreatesListsReadsCopiesMovesAndRequestsOneFileRemoval() async throws {
         let root = try makeRoot()
         let shell = LocalShell(rootURL: root)
 
@@ -27,9 +27,58 @@ final class LocalShellTests: XCTestCase {
         XCTAssertEqual(copied.outputLines, [])
         let moved = await shell.execute("mv copy.txt moved.txt")
         XCTAssertEqual(moved.outputLines, [])
-        let removed = await shell.execute("rm moved.txt")
+        let removal = await shell.execute("rm moved.txt")
+        guard let request = removal.deletionConfirmationRequest else {
+            return XCTFail("rm must return a deletion request")
+        }
+        let expectedTarget = try canonical(root).appendingPathComponent("docs/moved.txt")
+        XCTAssertEqual(request.targetURL, expectedTarget)
+        XCTAssertEqual(fileManager.fileExists(atPath: request.targetURL.path), true)
+
+        let removed = await shell.confirmDeletion(request)
         XCTAssertEqual(removed.outputLines, [])
-        XCTAssertEqual(fileManager.fileExists(atPath: root.appendingPathComponent("docs/moved.txt").path), false)
+        XCTAssertEqual(fileManager.fileExists(atPath: request.targetURL.path), false)
+    }
+
+    func testCancelDeletionLeavesNonEmptyFileUntouched() async throws {
+        let root = try makeRoot()
+        let target = root.appendingPathComponent("notes.txt")
+        try Data("keep me".utf8).write(to: target)
+        let shell = LocalShell(rootURL: root)
+
+        guard let request = (await shell.execute("rm notes.txt")).deletionConfirmationRequest else {
+            return XCTFail("rm must return a deletion request")
+        }
+        await shell.cancelDeletion(request)
+
+        XCTAssertEqual(fileManager.fileExists(atPath: target.path), true)
+        let retainedText = try String(contentsOf: target, encoding: .utf8)
+        XCTAssertEqual(retainedText, "keep me")
+    }
+
+    func testSupersededDeletionRequestCannotDeleteItsFile() async throws {
+        let root = try makeRoot()
+        let firstURL = root.appendingPathComponent("first.txt")
+        let secondURL = root.appendingPathComponent("second.txt")
+        try Data("first".utf8).write(to: firstURL)
+        try Data("second".utf8).write(to: secondURL)
+        let shell = LocalShell(rootURL: root)
+
+        guard
+            let first = (await shell.execute("rm first.txt")).deletionConfirmationRequest,
+            let second = (await shell.execute("rm second.txt")).deletionConfirmationRequest
+        else {
+            return XCTFail("rm must return deletion requests")
+        }
+        let staleResult = await shell.confirmDeletion(first)
+
+        XCTAssertEqual(fileManager.fileExists(atPath: firstURL.path), true)
+        XCTAssertEqual(fileManager.fileExists(atPath: secondURL.path), true)
+        XCTAssertEqual(staleResult.outputLines, ["Error: deletion request expired"])
+
+        _ = await shell.confirmDeletion(second)
+        XCTAssertEqual(fileManager.fileExists(atPath: firstURL.path), true)
+        XCTAssertEqual(fileManager.fileExists(atPath: secondURL.path), false)
     }
 
     func testShellRejectsRootAndDirectoryRemoval() async throws {

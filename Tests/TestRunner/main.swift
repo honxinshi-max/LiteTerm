@@ -83,23 +83,34 @@ struct LiteTermCoreTestRunner {
     private static func checkOversizedHistoryLimit(_ failures: inout [String]) {
         var history = TerminalHistory(limit: 10_000)
 
-        for index in 0...2_000 {
+        for index in 0...200 {
             history.append("\(index)")
         }
 
-        expect(history.lines.count == 2_000, "oversized history limit is capped at 2,000 lines", &failures)
+        expect(history.lines.count == 200, "oversized history limit is capped at 200 lines", &failures)
         expect(history.lines.first == "1", "oversized history drops its oldest line", &failures)
-        expect(history.lines.last == "2000", "oversized history retains its newest line", &failures)
+        expect(history.lines.last == "200", "oversized history retains its newest line", &failures)
     }
 
     private static func checkOversizedHistoryEntry(_ failures: inout [String]) {
         var history = TerminalHistory(limit: 2)
-        history.append(String(repeating: "a", count: 65_537))
+        history.append(String(repeating: "a", count: 16_385))
         expect(
-            history.lines.first?.utf8.count == 65_536,
-            "one history entry is bounded to 64 KiB",
+            history.lines.first?.utf8.count == 16_384,
+            "one history entry is bounded to 16 KiB",
             &failures
         )
+
+        var byteBounded = TerminalHistory(limit: 10, totalByteLimit: 10)
+        byteBounded.append("12345")
+        byteBounded.append("67890")
+        byteBounded.append("abc")
+        expect(byteBounded.lines == ["67890", "abc"], "history drops whole oldest lines at its total byte budget", &failures)
+        expect(byteBounded.totalByteCount == 8, "history accounts for retained UTF-8 bytes", &failures)
+        expect(byteBounded.previous() == "abc", "history Up selects the newest command", &failures)
+        expect(byteBounded.previous() == "67890", "repeated history Up selects the older command", &failures)
+        expect(byteBounded.next() == "abc", "history Down selects the newer command", &failures)
+        expect(byteBounded.next() == "", "history Down returns to an empty command line", &failures)
     }
 
     private static func checkControlLettersAndBracket(_ failures: inout [String]) {
@@ -249,12 +260,20 @@ struct LiteTermCoreTestRunner {
             let read = await shell.execute("cat source.txt")
             let copied = await shell.execute("cp source.txt copied.txt")
             let moved = await shell.execute("mv copied.txt moved.txt")
-            let removed = await shell.execute("rm moved.txt")
+            let removal = await shell.execute("rm moved.txt")
+            let canonicalRoot = try WorkspacePathResolver(rootURL: root, currentDirectoryURL: root).resolve("/")
+            let movedURL = canonicalRoot.appendingPathComponent("docs/moved.txt")
+            expect(removal.deletionConfirmationRequest?.targetURL.path == movedURL.path, "rm returns the exact single-file confirmation target", &failures)
+            expect(fileManager.fileExists(atPath: movedURL.path), "rm does not delete before explicit confirmation", &failures)
+            let removed = if let request = removal.deletionConfirmationRequest {
+                await shell.confirmDeletion(request)
+            } else {
+                ShellExecution(outputLines: ["missing request"])
+            }
             let rootRemoval = await shell.execute("rm /")
             let directoryRemoval = await shell.execute("rm .")
 
             expect(createdDirectory.outputLines.isEmpty, "local shell creates one directory", &failures)
-            let canonicalRoot = try WorkspacePathResolver(rootURL: root, currentDirectoryURL: root).resolve("/")
             expect(changedDirectory.directoryChange?.path == canonicalRoot.appendingPathComponent("docs").path, "local shell changes directory", &failures)
             expect(workingDirectory.outputLines == ["/docs"], "local shell reports virtual working directory", &failures)
             expect(touched.outputLines.isEmpty, "local shell creates one file", &failures)
@@ -263,9 +282,25 @@ struct LiteTermCoreTestRunner {
             expect(copied.outputLines.isEmpty, "local shell copies one file", &failures)
             expect(moved.outputLines.isEmpty, "local shell moves one file", &failures)
             expect(removed.outputLines.isEmpty, "local shell removes one file", &failures)
-            expect(!fileManager.fileExists(atPath: root.appendingPathComponent("docs/moved.txt").path), "local shell removal changes the temporary fixture", &failures)
+            expect(!fileManager.fileExists(atPath: movedURL.path), "confirmed local shell removal changes the temporary fixture", &failures)
             expect(rootRemoval.outputLines == ["Error: workspace root cannot be removed"], "local shell rejects workspace root removal", &failures)
             expect(directoryRemoval.outputLines == ["Error: directories cannot be removed"], "local shell rejects directory removal", &failures)
+
+            let keepURL = root.appendingPathComponent("docs/keep.txt")
+            let staleURL = root.appendingPathComponent("docs/stale.txt")
+            try Data("keep".utf8).write(to: keepURL)
+            try Data("stale".utf8).write(to: staleURL)
+            if let cancelled = (await shell.execute("rm keep.txt")).deletionConfirmationRequest {
+                await shell.cancelDeletion(cancelled)
+            }
+            expect(fileManager.fileExists(atPath: keepURL.path), "cancelled rm preserves a non-empty file", &failures)
+            let stale = (await shell.execute("rm stale.txt")).deletionConfirmationRequest
+            _ = await shell.execute("pwd")
+            if let stale {
+                let staleResult = await shell.confirmDeletion(stale)
+                expect(staleResult.outputLines == ["Error: deletion request expired"], "a later command invalidates an rm request", &failures)
+            }
+            expect(fileManager.fileExists(atPath: staleURL.path), "a stale rm request cannot delete its file", &failures)
         } catch {
             failures.append("local shell runner fixture can be created: \(error)")
         }
@@ -436,15 +471,15 @@ struct LiteTermCoreTestRunner {
     }
 
     private static func checkLocalTerminalInputBound(_ failures: inout [String]) {
-        var reducer = LocalTerminalInputReducer()
-        let oversized = Array(repeating: UInt8(ascii: "a"), count: 65_537)
+        var reducer = LocalTerminalInputReducer(maximumInputBytes: 8)
+        let oversized = Array(repeating: UInt8(ascii: "a"), count: 9)
         let pasteEvents = reducer.reduce(oversized)
         let echoedByteCount = pasteEvents.reduce(into: 0) { count, event in
             if case .echo(let bytes) = event {
                 count += bytes.count
             }
         }
-        expect(echoedByteCount == 65_536, "Local paste echo is bounded to 64 KiB", &failures)
+        expect(echoedByteCount == 8, "Local paste echo is bounded to its input budget", &failures)
 
         _ = reducer.reduce([0x7F])
         _ = reducer.reduce([UInt8(ascii: "b")])
@@ -453,8 +488,31 @@ struct LiteTermCoreTestRunner {
             failures.append("bounded Local input remains submittable")
             return
         }
-        expect(command.utf8.count == 65_536, "Local command buffer is bounded to 64 KiB", &failures)
+        expect(command.utf8.count == 8, "Local command buffer is bounded to its input budget", &failures)
         expect(command.last == "b", "backspace releases Local input capacity", &failures)
+
+        var unicode = LocalTerminalInputReducer(maximumInputBytes: 8)
+        let emoji = Array("😀".utf8)
+        expect(unicode.reduce(Array(emoji.prefix(2))).isEmpty, "split UTF-8 emits no partial scalar", &failures)
+        expect(unicode.bufferedPartialScalarByteCount == 2, "split UTF-8 retains only its bounded scalar prefix", &failures)
+        expect(unicode.reduce(Array(emoji.suffix(2))) == [.echo(emoji)], "split UTF-8 echoes one complete scalar atomically", &failures)
+        expect(unicode.reduce([0x0D]) == [.submit("😀")], "split UTF-8 submits without replacement corruption", &failures)
+
+        var exactBoundary = LocalTerminalInputReducer(maximumInputBytes: 5)
+        _ = exactBoundary.reduce(Array("abc".utf8))
+        expect(exactBoundary.reduce(emoji).isEmpty, "a scalar crossing the exact input boundary is rejected atomically", &failures)
+        expect(exactBoundary.reduce([0x0D]) == [.submit("abc")], "boundary rejection preserves valid input", &failures)
+
+        var paste = LocalTerminalInputReducer(maximumEventsPerReduction: 6)
+        expect(paste.reduce(Array(String(repeating: "x\n", count: 100).utf8)).count == 6, "multiline paste work is capped by one event budget", &failures)
+
+        var navigation = LocalTerminalInputReducer()
+        _ = navigation.reduce(Array("pwd\r".utf8))
+        _ = navigation.reduce(Array("ls\r".utf8))
+        expect(navigation.navigateHistory(.previous) == [.replaceLine(Array("ls".utf8))], "Local Up recalls the latest command", &failures)
+        expect(navigation.navigateHistory(.previous) == [.replaceLine(Array("pwd".utf8))], "repeated Local Up recalls older history", &failures)
+        expect(navigation.navigateHistory(.next) == [.replaceLine(Array("ls".utf8))], "Local Down advances history", &failures)
+        expect(navigation.navigateHistory(.next) == [.replaceLine([])], "Local Down returns to an empty input line", &failures)
     }
 
     private static func checkCoordinatedPathInspection(_ failures: inout [String]) async {
@@ -1201,7 +1259,6 @@ struct LiteTermCoreTestRunner {
 
             flow.selectLocalWorkspace(id: root.path)
             expect(flow.activeMode == .local, "acceptance starts in Local mode", &failures)
-            expect(flow.activeTerminalSessionCount == 1, "acceptance starts with one terminal session", &failures)
             expect(flow.activeSSHConnectionCount == 0, "acceptance starts without SSH", &failures)
 
             let touch = await shell.execute("touch draft.txt")
@@ -1234,7 +1291,6 @@ struct LiteTermCoreTestRunner {
                 &failures
             )
             expect(flow.activeMode == .ssh, "acceptance switches to SSH mode", &failures)
-            expect(flow.activeTerminalSessionCount == 1, "SSH replaces Local as the one terminal session", &failures)
             expect(flow.activeSSHConnectionCount == 1, "acceptance has one SSH connection", &failures)
 
             expect(ssh.reduce(.hostKeyValidated, generation: sshGeneration), "acceptance validates the SSH host key", &failures)
@@ -1252,7 +1308,6 @@ struct LiteTermCoreTestRunner {
 
             flow.returnToLocal()
             expect(flow.activeMode == .local, "acceptance returns to Local mode", &failures)
-            expect(flow.activeTerminalSessionCount == 1, "Local return keeps one terminal session", &failures)
             let localReturnListing = await shell.execute("ls")
             expect(localReturnListing.outputLines == ["draft.txt"], "Local return retains the selected workspace", &failures)
         } catch {

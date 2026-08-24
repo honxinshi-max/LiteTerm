@@ -11,7 +11,10 @@ let package = Package(
         .library(name: "LiteTermCore", targets: ["LiteTermCore"])
     ],
     targets: [
-        .target(name: "LiteTermCore"),
+        .target(
+            name: "LiteTermCore",
+            resources: [.process("Resources/PrivacyInfo.xcprivacy")]
+        ),
         .executableTarget(
             name: "LiteTermCoreTestRunner",
             dependencies: ["LiteTermCore"],

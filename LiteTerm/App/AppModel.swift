@@ -21,6 +21,7 @@ final class AppModel: ObservableObject {
     @Published var isShowingFolderPicker = false
     @Published var isShowingHosts = false
     @Published var editorDocument: EditorDocument?
+    @Published var deletionConfirmationRequest: DeletionConfirmationRequest?
     @Published var authorizationErrorMessage: String?
     @Published private(set) var activeWorkspaceName: String
 
@@ -33,9 +34,18 @@ final class AppModel: ObservableObject {
     var onHostsRequested: (() -> Void)?
     var canRequestHosts: Bool { onHostsRequested != nil }
 
-    init() {
-        let authorizationStore = FolderAuthorizationStore()
-        let secrets = KeychainStore()
+    convenience init() {
+        self.init(
+            folderAuthorizationStore: FolderAuthorizationStore(),
+            secrets: KeychainStore()
+        )
+    }
+
+    init(
+        folderAuthorizationStore authorizationStore: FolderAuthorizationStore,
+        secrets: any HostSecretStoring,
+        sshClientFactory: @escaping SSHSessionController.ClientFactory = { SSHClient(configuration: $0) }
+    ) {
         folderAuthorizationStore = authorizationStore
         hostStore = HostStore(secrets: secrets)
 
@@ -54,13 +64,17 @@ final class AppModel: ObservableObject {
         self.terminalSession = terminalSession
         let sshSession = SSHSessionController(
             secrets: secrets,
-            terminalSession: terminalSession
+            terminalSession: terminalSession,
+            clientFactory: sshClientFactory
         )
         self.sshSession = sshSession
         activeWorkspaceName = initialRoot.lastPathComponent
         authorizationErrorMessage = initialError
         terminalSession.onEditorRequested = { [weak self] url in
             self?.editorDocument = EditorDocument(url: url)
+        }
+        terminalSession.onDeletionConfirmationChanged = { [weak self] request in
+            self?.deletionConfirmationRequest = request
         }
         terminalSession.onRemoteInput = { [weak sshSession] bytes in
             sshSession?.send(bytes)
@@ -105,6 +119,14 @@ final class AppModel: ObservableObject {
         onHostsRequested?()
     }
 
+    func confirmDeletion(_ request: DeletionConfirmationRequest) {
+        terminalSession.confirmDeletion(request)
+    }
+
+    func cancelDeletion(_ request: DeletionConfirmationRequest) {
+        terminalSession.cancelDeletion(request)
+    }
+
     func connect(to host: SSHHost) {
         mode = .ssh
         sshSession.connect(host: host)
@@ -128,8 +150,9 @@ final class AppModel: ObservableObject {
         sshSession.scenePhaseChanged(.inactive)
     }
 
-    private func selectExternalFolder(_ url: URL) async {
+    func selectExternalFolder(_ url: URL) async {
         await terminalSession.suspendLocalInputAndDrain()
+        defer { terminalSession.resumeLocalInput() }
         do {
             let root = try folderAuthorizationStore.select(url: url)
             terminalSession.installLocalRoot(
@@ -137,14 +160,22 @@ final class AppModel: ObservableObject {
                 coordinateFileAccess: root.standardizedFileURL != folderAuthorizationStore.documentsURL.standardizedFileURL
             )
             activeWorkspaceName = root.lastPathComponent
+            authorizationErrorMessage = nil
         } catch {
+            let reconciledRoot = folderAuthorizationStore.activeRootURL
+            terminalSession.installLocalRoot(
+                reconciledRoot,
+                coordinateFileAccess: reconciledRoot.standardizedFileURL
+                    != folderAuthorizationStore.documentsURL.standardizedFileURL
+            )
+            activeWorkspaceName = reconciledRoot.lastPathComponent
             authorizationErrorMessage = error.localizedDescription
         }
-        terminalSession.resumeLocalInput()
     }
 
     private func switchToAppDocuments(clearBookmark: Bool) async {
         await terminalSession.suspendLocalInputAndDrain()
+        defer { terminalSession.resumeLocalInput() }
         if clearBookmark {
             folderAuthorizationStore.useAppDocuments()
         } else {
@@ -152,11 +183,11 @@ final class AppModel: ObservableObject {
         }
         terminalSession.installLocalRoot(folderAuthorizationStore.documentsURL)
         activeWorkspaceName = folderAuthorizationStore.documentsURL.lastPathComponent
-        terminalSession.resumeLocalInput()
     }
 
     private func restoreWorkspaceAfterActivation() async {
         await terminalSession.suspendLocalInputAndDrain()
+        defer { terminalSession.resumeLocalInput() }
         do {
             let root = try folderAuthorizationStore.restore()
             terminalSession.installLocalRoot(
@@ -169,6 +200,5 @@ final class AppModel: ObservableObject {
             activeWorkspaceName = folderAuthorizationStore.documentsURL.lastPathComponent
             authorizationErrorMessage = error.localizedDescription
         }
-        terminalSession.resumeLocalInput()
     }
 }

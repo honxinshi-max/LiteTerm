@@ -10,6 +10,144 @@ import XCTest
 
 @MainActor
 final class SSHSessionBoundaryTests: XCTestCase {
+    func testAppHostedLocalSSHReplacementAndLocalReturnKeepOneLiveTransport() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-App-Acceptance-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        let host = try makeHost()
+        let secrets = makeSecrets()
+        defer { clean(secrets, hostID: host.id) }
+        try installPassword(in: secrets, hostID: host.id)
+        let terminal = TerminalSessionCoordinator(rootURL: root)
+        let clients = BoundaryClientStore()
+        clients.delayFirstClose = true
+        let controller = SSHSessionController(
+            secrets: secrets,
+            terminalSession: terminal,
+            clientFactory: clients.makeClient
+        )
+        terminal.onRemoteInput = { [weak controller] bytes in
+            controller?.send(bytes)
+        }
+
+        controller.scenePhaseChanged(.active)
+        terminal.setMode(.ssh)
+        controller.connect(host: host)
+        let first = try XCTUnwrap(clients.clients.first)
+        first.validateSavedHostKey()
+        first.becomeReady()
+        await drainMainActor()
+        XCTAssertEqual(controller.state, .connected)
+        XCTAssertEqual(clients.activeClientCount, 1)
+
+        terminal.sendText("remote-one\r")
+        XCTAssertEqual(first.sentBytes, [Array("remote-one\r".utf8)])
+        XCTAssertTrue(terminal.receiveRemoteBytes(Array("remote-output".utf8)))
+
+        controller.connect(host: host)
+        XCTAssertEqual(clients.clients.count, 1)
+        XCTAssertEqual(clients.activeClientCount, 1)
+        first.becomeReady()
+        let staleAcknowledged = NIOLockedValueBox(false)
+        first.deliver(Array("stale-output".utf8), acknowledged: staleAcknowledged)
+        await drainMainActor()
+        XCTAssertEqual(controller.state, .connecting)
+        XCTAssertTrue(staleAcknowledged.withLockedValue { $0 })
+
+        first.finishClose()
+        await drainMainActor()
+        XCTAssertEqual(clients.clients.count, 2)
+        XCTAssertEqual(clients.activeClientCount, 1)
+        let replacement = clients.clients[1]
+        replacement.validateSavedHostKey()
+        replacement.becomeReady()
+        await drainMainActor()
+        XCTAssertEqual(controller.state, .connected)
+
+        terminal.sendText("remote-two\r")
+        XCTAssertEqual(replacement.sentBytes, [Array("remote-two\r".utf8)])
+        terminal.setMode(.local)
+        controller.disconnect()
+        XCTAssertEqual(clients.activeClientCount, 0)
+        XCTAssertFalse(terminal.receiveRemoteBytes(Array("late-output".utf8)))
+        terminal.sendText("touch local.txt\r")
+        await terminal.suspendLocalInputAndDrain()
+        terminal.resumeLocalInput()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("local.txt").path))
+        XCTAssertEqual(replacement.sentBytes, [Array("remote-two\r".utf8)])
+    }
+
+    func testModeAndRootGenerationInvalidatePendingDeletion() async throws {
+        let firstRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Delete-First-\(UUID().uuidString)", isDirectory: true)
+        let secondRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Delete-Second-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: firstRoot, withIntermediateDirectories: false)
+        try FileManager.default.createDirectory(at: secondRoot, withIntermediateDirectories: false)
+        let target = firstRoot.appendingPathComponent("keep.txt")
+        try Data("keep".utf8).write(to: target)
+        let terminal = TerminalSessionCoordinator(rootURL: firstRoot)
+        var presentedRequest: DeletionConfirmationRequest?
+        terminal.onDeletionConfirmationChanged = { presentedRequest = $0 }
+
+        terminal.sendText("rm keep.txt\r")
+        await terminal.suspendLocalInputAndDrain()
+        terminal.resumeLocalInput()
+        let modeStaleRequest = try XCTUnwrap(presentedRequest)
+        terminal.setMode(.ssh)
+        terminal.confirmDeletion(modeStaleRequest)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: target.path))
+        XCTAssertNil(presentedRequest)
+
+        terminal.setMode(.local)
+        terminal.sendText("rm keep.txt\r")
+        await terminal.suspendLocalInputAndDrain()
+        terminal.resumeLocalInput()
+        let rootStaleRequest = try XCTUnwrap(presentedRequest)
+        await terminal.suspendLocalInputAndDrain()
+        terminal.installLocalRoot(secondRoot)
+        terminal.resumeLocalInput()
+        terminal.confirmDeletion(rootStaleRequest)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: target.path))
+        XCTAssertNil(presentedRequest)
+    }
+
+    func testFailedFolderReplacementAndRestorationReconcilesTerminalToDocuments() async throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Scope-Fallback-\(UUID().uuidString)", isDirectory: true)
+        let documents = base.appendingPathComponent("Documents", isDirectory: true)
+        let previous = base.appendingPathComponent("Previous", isDirectory: true)
+        let replacement = base.appendingPathComponent("Replacement", isDirectory: true)
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: previous, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: replacement, withIntermediateDirectories: true)
+        let access = BoundaryFolderAccess()
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "LiteTerm.Scope.\(UUID().uuidString)"))
+        let store = FolderAuthorizationStore(
+            documentsURL: documents,
+            defaults: defaults,
+            resourceAccess: access.dependencies
+        )
+        let model = AppModel(
+            folderAuthorizationStore: store,
+            secrets: KeychainStore(service: "com.liteterm.tests.scope.\(UUID().uuidString)")
+        )
+
+        await model.selectExternalFolder(previous)
+        XCTAssertEqual(model.terminalSession.activeWorkspaceID, previous.path)
+        access.failAllStarts = true
+
+        await model.selectExternalFolder(replacement)
+
+        XCTAssertEqual(access.stopCounts[previous], 1)
+        XCTAssertEqual(access.startCounts[previous], 2)
+        XCTAssertEqual(store.activeRootURL, documents)
+        XCTAssertTrue(store.needsReauthorization)
+        XCTAssertEqual(model.terminalSession.activeWorkspaceID, documents.path)
+        XCTAssertEqual(model.activeWorkspaceName, "Documents")
+        XCTAssertNotNil(model.authorizationErrorMessage)
+    }
+
     func testDuplicateAuthenticationSuccessClaimsOnlyOneChildSession() {
         var gate = SSHChildSessionCreationGate()
 
@@ -571,6 +709,10 @@ private final class BoundaryClientStore {
     var clients: [BoundarySSHClient] = []
     var delayFirstClose = false
 
+    var activeClientCount: Int {
+        clients.filter { $0.didConnect && !$0.didFinishClose }.count
+    }
+
     func makeClient(configuration: LiteTermSSHClientConfiguration) -> any SSHClientTransport {
         let client = BoundarySSHClient(configuration: configuration)
         if delayFirstClose, clients.isEmpty {
@@ -581,9 +723,33 @@ private final class BoundaryClientStore {
     }
 }
 
+@MainActor
+private final class BoundaryFolderAccess {
+    var failAllStarts = false
+    private(set) var startCounts: [URL: Int] = [:]
+    private(set) var stopCounts: [URL: Int] = [:]
+
+    var dependencies: FolderAuthorizationDependencies {
+        FolderAuthorizationDependencies(
+            startAccessing: { [weak self] url in
+                guard let self else { return false }
+                self.startCounts[url, default: 0] += 1
+                return !self.failAllStarts
+            },
+            stopAccessing: { [weak self] url in
+                self?.stopCounts[url, default: 0] += 1
+            },
+            isDirectory: { _ in true },
+            makeBookmark: { _ in Data("bookmark".utf8) }
+        )
+    }
+}
+
 private final class BoundarySSHClient: SSHClientTransport, @unchecked Sendable {
     let configuration: LiteTermSSHClientConfiguration
     private(set) var didConnect = false
+    private(set) var didFinishClose = false
+    private(set) var sentBytes: [[UInt8]] = []
     var completesCloseImmediately = true
     private var pendingClose: (@Sendable () -> Void)?
 
@@ -595,7 +761,9 @@ private final class BoundarySSHClient: SSHClientTransport, @unchecked Sendable {
         didConnect = true
     }
 
-    func send(_ bytes: [UInt8]) {}
+    func send(_ bytes: [UInt8]) {
+        sentBytes.append(bytes)
+    }
 
     func resize(columns: Int, rows: Int) {}
 
@@ -609,6 +777,7 @@ private final class BoundarySSHClient: SSHClientTransport, @unchecked Sendable {
 
     func close(completion: @escaping @Sendable () -> Void) {
         if completesCloseImmediately {
+            didFinishClose = true
             completion()
         } else {
             pendingClose = completion
@@ -618,6 +787,7 @@ private final class BoundarySSHClient: SSHClientTransport, @unchecked Sendable {
     func finishClose() {
         let completion = pendingClose
         pendingClose = nil
+        didFinishClose = true
         completion?()
     }
 

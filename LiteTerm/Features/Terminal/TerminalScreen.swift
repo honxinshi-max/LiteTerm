@@ -50,6 +50,18 @@ struct TerminalScreen: View {
         } message: {
             Text(model.authorizationErrorMessage ?? "Folder authorization failed.")
         }
+        .alert(item: $model.deletionConfirmationRequest) { request in
+            Alert(
+                title: Text("Delete this file?"),
+                message: Text(request.targetURL.path),
+                primaryButton: .destructive(Text("Delete")) {
+                    model.confirmDeletion(request)
+                },
+                secondaryButton: .cancel {
+                    model.cancelDeletion(request)
+                }
+            )
+        }
         .background(SSHHostTrustPresenter(session: model.sshSession))
     }
 

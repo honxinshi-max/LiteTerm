@@ -19,6 +19,29 @@ enum FolderAuthorizationError: LocalizedError {
 }
 
 @MainActor
+struct FolderAuthorizationDependencies {
+    let startAccessing: @MainActor (URL) -> Bool
+    let stopAccessing: @MainActor (URL) -> Void
+    let isDirectory: @MainActor (URL) throws -> Bool
+    let makeBookmark: @MainActor (URL) throws -> Data
+
+    static let live = FolderAuthorizationDependencies(
+        startAccessing: { $0.startAccessingSecurityScopedResource() },
+        stopAccessing: { $0.stopAccessingSecurityScopedResource() },
+        isDirectory: { url in
+            try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true
+        },
+        makeBookmark: { url in
+            try url.bookmarkData(
+                options: .minimalBookmark,
+                includingResourceValuesForKeys: [.isDirectoryKey],
+                relativeTo: nil
+            )
+        }
+    )
+}
+
+@MainActor
 final class FolderAuthorizationStore: ObservableObject {
     @Published private(set) var activeRootURL: URL
     @Published private(set) var needsReauthorization = false
@@ -26,14 +49,23 @@ final class FolderAuthorizationStore: ObservableObject {
     let documentsURL: URL
 
     private let defaults: UserDefaults
+    private let resourceAccess: FolderAuthorizationDependencies
     private let bookmarkKey = "LiteTerm.activeExternalFolderBookmark"
     private var externalRootURL: URL?
     private var isAccessingExternalRoot = false
 
-    init(fileManager: FileManager = .default, defaults: UserDefaults = .standard) {
-        documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        activeRootURL = documentsURL
+    init(
+        fileManager: FileManager = .default,
+        documentsURL: URL? = nil,
+        defaults: UserDefaults = .standard,
+        resourceAccess: FolderAuthorizationDependencies = .live
+    ) {
+        let resolvedDocumentsURL = documentsURL
+            ?? fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        self.documentsURL = resolvedDocumentsURL
+        activeRootURL = resolvedDocumentsURL
         self.defaults = defaults
+        self.resourceAccess = resourceAccess
     }
 
     @discardableResult
@@ -45,21 +77,16 @@ final class FolderAuthorizationStore: ObservableObject {
 
         let previousURL = externalRootURL
         stopCurrentExternalAccess()
-        guard url.startAccessingSecurityScopedResource() else {
+        guard resourceAccess.startAccessing(url) else {
             restoreAccessIfPossible(to: previousURL)
             throw FolderAuthorizationError.accessDenied
         }
 
         do {
-            let values = try url.resourceValues(forKeys: [.isDirectoryKey])
-            guard values.isDirectory == true else {
+            guard try resourceAccess.isDirectory(url) else {
                 throw FolderAuthorizationError.notDirectory
             }
-            let bookmark = try url.bookmarkData(
-                options: .minimalBookmark,
-                includingResourceValuesForKeys: [.isDirectoryKey],
-                relativeTo: nil
-            )
+            let bookmark = try resourceAccess.makeBookmark(url)
 
             isAccessingExternalRoot = true
             externalRootURL = url
@@ -68,7 +95,7 @@ final class FolderAuthorizationStore: ObservableObject {
             defaults.set(bookmark, forKey: bookmarkKey)
             return url
         } catch {
-            url.stopAccessingSecurityScopedResource()
+            resourceAccess.stopAccessing(url)
             restoreAccessIfPossible(to: previousURL)
             throw error
         }
@@ -104,7 +131,7 @@ final class FolderAuthorizationStore: ObservableObject {
             needsReauthorization = true
             throw FolderAuthorizationError.staleBookmark
         }
-        guard url.startAccessingSecurityScopedResource() else {
+        guard resourceAccess.startAccessing(url) else {
             activeRootURL = documentsURL
             needsReauthorization = true
             throw FolderAuthorizationError.accessDenied
@@ -131,15 +158,16 @@ final class FolderAuthorizationStore: ObservableObject {
 
     private func stopCurrentExternalAccess() {
         if isAccessingExternalRoot, let externalRootURL {
-            externalRootURL.stopAccessingSecurityScopedResource()
+            resourceAccess.stopAccessing(externalRootURL)
         }
         isAccessingExternalRoot = false
         externalRootURL = nil
     }
 
     private func restoreAccessIfPossible(to url: URL?) {
-        guard let url, url.startAccessingSecurityScopedResource() else {
+        guard let url, resourceAccess.startAccessing(url) else {
             activeRootURL = documentsURL
+            needsReauthorization = url != nil
             return
         }
         externalRootURL = url

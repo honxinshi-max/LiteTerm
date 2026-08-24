@@ -13,13 +13,26 @@ pass() {
     printf 'PASS: %s\n' "$1"
 }
 
+if command -v rg >/dev/null 2>&1; then
+    if rg -n '\blocalGeneration\b' LiteTerm/Features/Terminal/TerminalSessionCoordinator.swift; then
+        fail "app coordinator contains the removed localGeneration identifier"
+    fi
+else
+    if /usr/bin/grep -n 'localGeneration' LiteTerm/Features/Terminal/TerminalSessionCoordinator.swift; then
+        fail "app coordinator contains the removed localGeneration identifier"
+    fi
+fi
+pass "known removed app-state identifiers are absent"
+
 for required_path in \
     Package.swift \
     project.yml \
     LiteTerm.xcodeproj/project.pbxproj \
+    LiteTerm.xcodeproj/xcshareddata/xcschemes/LiteTerm.xcscheme \
     LiteTerm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved \
     LiteTerm/Resources/Info.plist \
     LiteTerm/Resources/PrivacyInfo.xcprivacy \
+    Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy \
     THIRD_PARTY_NOTICES.md \
     Tests/LiteTermCoreTests/AcceptanceFlowTests.swift
 do
@@ -40,12 +53,14 @@ fi
 /usr/bin/plutil -lint \
     LiteTerm.xcodeproj/project.pbxproj \
     LiteTerm/Resources/Info.plist \
-    LiteTerm/Resources/PrivacyInfo.xcprivacy >/dev/null
-pass "PBX project, Info.plist, and privacy manifest parse"
+    LiteTerm/Resources/PrivacyInfo.xcprivacy \
+    Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy >/dev/null
+pass "PBX project, Info.plist, and both privacy manifests parse"
 
 /usr/bin/ruby <<'RUBY'
 require "json"
 require "open3"
+require "rexml/document"
 require "yaml"
 
 def assert(condition, message)
@@ -73,6 +88,44 @@ end
 assert(project.dig("targets", "LiteTermCoreTests", "sources") == ["Tests/LiteTermCoreTests"], "Core test target source membership changed")
 assert(project.dig("targets", "LiteTermSSHTests", "sources") == ["Tests/LiteTermSSHTests"], "SSH test target source membership changed")
 assert(project.dig("targets", "LiteTermUITests", "sources") == ["LiteTermUITests"], "UI test target source membership changed")
+assert(
+  project.dig("schemes", "LiteTerm", "test", "targets") == %w[LiteTermCoreTests LiteTermSSHTests LiteTermUITests],
+  "shared scheme test-target membership changed"
+)
+
+scheme = REXML::Document.new(File.read("LiteTerm.xcodeproj/xcshareddata/xcschemes/LiteTerm.xcscheme"))
+scheme_test_targets = REXML::XPath.match(scheme, "//TestAction/Testables/TestableReference/BuildableReference").map do |element|
+  element.attributes["BlueprintName"]
+end
+assert(
+  scheme_test_targets == %w[LiteTermCoreTests LiteTermSSHTests LiteTermUITests],
+  "generated shared scheme does not build all test targets"
+)
+
+def explicit_resource_paths(project, target_name)
+  project.dig("targets", target_name, "sources").each_with_object([]) do |entry, paths|
+    paths << entry["path"] if entry.is_a?(Hash) && entry["buildPhase"] == "resources"
+  end
+end
+
+assert(
+  explicit_resource_paths(project, "LiteTermCore") == ["Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy"],
+  "Core privacy manifest must be the framework's explicit resource"
+)
+assert(
+  explicit_resource_paths(project, "LiteTerm").include?("LiteTerm/Resources/PrivacyInfo.xcprivacy"),
+  "app privacy manifest must be the app's explicit resource"
+)
+
+package_json, package_status = Open3.capture2("swift", "package", "dump-package")
+assert(package_status.success?, "Swift package model dump failed")
+package = JSON.parse(package_json)
+core_package_target = package.fetch("targets").find { |target| target["name"] == "LiteTermCore" }
+assert(core_package_target, "LiteTermCore Swift package target missing")
+assert(
+  core_package_target.fetch("resources") == [{"path" => "Resources/PrivacyInfo.xcprivacy", "rule" => {"process" => {}}}],
+  "LiteTermCore Swift package privacy resource declaration changed"
+)
 
 resolved = JSON.parse(File.read("LiteTerm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"))
 expected_resolved = {
@@ -115,56 +168,104 @@ accessed = privacy.fetch("NSPrivacyAccessedAPITypes").to_h do |entry|
 end
 expected_accessed = {
   "NSPrivacyAccessedAPICategoryUserDefaults" => ["CA92.1"],
-  "NSPrivacyAccessedAPICategoryFileTimestamp" => ["3B52.1"]
+  "NSPrivacyAccessedAPICategoryFileTimestamp" => ["C617.1", "3B52.1"]
 }
 assert(accessed == expected_accessed, "required-reason API declarations changed")
+
+core_privacy_json, core_privacy_status = Open3.capture2(
+  "/usr/bin/plutil", "-convert", "json", "-o", "-", "Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy"
+)
+assert(core_privacy_status.success?, "Core privacy manifest JSON conversion failed")
+core_privacy = JSON.parse(core_privacy_json)
+assert(core_privacy["NSPrivacyTracking"] == false, "Core privacy tracking must be false")
+assert(core_privacy["NSPrivacyTrackingDomains"] == [], "Core tracking domains must be empty")
+assert(core_privacy["NSPrivacyCollectedDataTypes"] == [], "Core collected data types must be empty")
+core_accessed = core_privacy.fetch("NSPrivacyAccessedAPITypes").to_h do |entry|
+  [entry.fetch("NSPrivacyAccessedAPIType"), entry.fetch("NSPrivacyAccessedAPITypeReasons")]
+end
+assert(
+  core_accessed == {"NSPrivacyAccessedAPICategoryFileTimestamp" => ["C617.1", "3B52.1"]},
+  "Core privacy manifest must declare only its FileTimestamp reasons"
+)
 
 pbx_json, pbx_status = Open3.capture2("/usr/bin/plutil", "-convert", "json", "-o", "-", "LiteTerm.xcodeproj/project.pbxproj")
 assert(pbx_status.success?, "PBX project JSON conversion failed")
 pbx = JSON.parse(pbx_json)
 objects = pbx.fetch("objects")
-target_id, target = objects.find { |_id, object| object["isa"] == "PBXNativeTarget" && object["name"] == "LiteTerm" }
-assert(target_id && target, "LiteTerm native target missing")
-resource_phase_ids = target.fetch("buildPhases").select { |id| objects.dig(id, "isa") == "PBXResourcesBuildPhase" }
-resource_file_ids = resource_phase_ids.flat_map { |id| objects.fetch(id).fetch("files", []) }
-resource_paths = resource_file_ids.map do |build_file_id|
-  file_ref_id = objects.dig(build_file_id, "fileRef")
-  file_ref = file_ref_id && objects[file_ref_id]
-  file_ref && (file_ref["path"] || file_ref["name"])
-end.compact
-assert(resource_paths.include?("PrivacyInfo.xcprivacy"), "privacy manifest is not in LiteTerm resources")
-assert(resource_paths.include?("THIRD_PARTY_NOTICES.md"), "third-party notices are not in LiteTerm resources")
+def resource_refs(objects, target_name)
+  _target_id, target = objects.find do |_id, object|
+    object["isa"] == "PBXNativeTarget" && object["name"] == target_name
+  end
+  assert(target, "#{target_name} native target missing")
+  phase_ids = target.fetch("buildPhases").select { |id| objects.dig(id, "isa") == "PBXResourcesBuildPhase" }
+  phase_ids.flat_map { |id| objects.fetch(id).fetch("files", []) }.each_with_object([]) do |build_file_id, refs|
+    file_ref_id = objects.dig(build_file_id, "fileRef")
+    file_ref = file_ref_id && objects[file_ref_id]
+    refs << [file_ref_id, file_ref["path"] || file_ref["name"]] if file_ref
+  end
+end
+
+app_resource_refs = resource_refs(objects, "LiteTerm")
+core_resource_refs = resource_refs(objects, "LiteTermCore")
+app_privacy_refs = app_resource_refs.select { |_id, path| path == "PrivacyInfo.xcprivacy" }
+core_privacy_refs = core_resource_refs.select { |_id, path| path == "PrivacyInfo.xcprivacy" }
+assert(app_privacy_refs.length == 1, "app target must contain exactly one privacy manifest resource")
+assert(core_privacy_refs.length == 1, "Core target must contain exactly one privacy manifest resource")
+assert(app_privacy_refs.first.first != core_privacy_refs.first.first, "app and Core targets must use distinct privacy manifest file references")
+assert(app_resource_refs.any? { |_id, path| path == "THIRD_PARTY_NOTICES.md" }, "third-party notices are not in LiteTerm resources")
 target_names = objects.values.select { |object| object["isa"] == "PBXNativeTarget" }.map { |object| object["name"] }
 %w[LiteTermCoreTests LiteTermSSHTests LiteTermUITests].each do |name|
   assert(target_names.include?(name), "#{name} generated target missing")
 end
 RUBY
-pass "project model, pins, targets, resources, orientations, local-network copy, and privacy declarations match"
+pass "project model, pins, targets, distinct privacy resources, orientations, local-network copy, and privacy declarations match"
 
-if rg -n -i \
-    'SFTP|port[[:space:]_-]*forward|Docker|VirtualMachine|PythonKit|JavaScriptCore|NodeRuntime|background[[:space:]_-]*keepalive|UIBackgroundModes|NSBonjourServices|CKContainer|CloudKit|Process[[:space:]]*\(|NSTask\b|dlopen[[:space:]]*\(' \
-    LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj
-then
+forbidden_pattern='SFTP|port[[:space:]_-]*forward|Docker|VirtualMachine|PythonKit|JavaScriptCore|NodeRuntime|background[[:space:]_-]*keepalive|UIBackgroundModes|NSBonjourServices|CKContainer|CloudKit|NSTask([^[:alnum:]_]|$)|dlopen[[:space:]]*\('
+process_pattern='(^|[^[:alnum:]_.])Process[[:space:]]*\('
+if command -v rg >/dev/null 2>&1; then
+    forbidden_matches=$(rg -n -i "$forbidden_pattern" LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj || true)
+    process_matches=$(rg -n "$process_pattern" LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj || true)
+else
+    forbidden_matches=$(/usr/bin/grep -R -E -n -i "$forbidden_pattern" LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj || true)
+    process_matches=$(/usr/bin/grep -R -E -n "$process_pattern" LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj || true)
+fi
+if test -n "$forbidden_matches$process_matches"; then
+    printf '%s\n' "$forbidden_matches"
+    printf '%s\n' "$process_matches"
     fail "forbidden V0.1 product addition found in production/project scope"
 fi
 pass "production/project scope contains no forbidden product additions"
 
-if rg -n -i \
-    '"(password|privateKey|private_key|passphrase|secret|token)"[[:space:]]*[,\]]|CodingKeys[^\n]*(password|privateKey|passphrase|secret|token)' \
-    Sources/LiteTermCore/Hosts/SSHHost.swift \
-    Sources/LiteTermCore/Hosts/HostRepository.swift \
-    LiteTerm/Features/FileAccess/FolderAuthorizationStore.swift
-then
+secret_pattern='"(password|privateKey|private_key|passphrase|secret|token)"[[:space:]]*[,]]|CodingKeys.*(password|privateKey|passphrase|secret|token)'
+if command -v rg >/dev/null 2>&1; then
+    secret_matches=$(rg -n -i "$secret_pattern" Sources/LiteTermCore/Hosts/SSHHost.swift Sources/LiteTermCore/Hosts/HostRepository.swift LiteTerm/Features/FileAccess/FolderAuthorizationStore.swift || true)
+else
+    secret_matches=$(/usr/bin/grep -E -n -i "$secret_pattern" Sources/LiteTermCore/Hosts/SSHHost.swift Sources/LiteTermCore/Hosts/HostRepository.swift LiteTerm/Features/FileAccess/FolderAuthorizationStore.swift || true)
+fi
+if test -n "$secret_matches"; then
+    printf '%s\n' "$secret_matches"
     fail "secret-bearing persisted field found in host/bookmark metadata scope"
 fi
 pass "host/bookmark persisted-field scope contains no secret-bearing key"
 
-test -z "$(git remote)" || fail "a Git remote is configured"
-pass "no Git remote is configured"
+configured_remotes=$(git remote)
+if test -z "$configured_remotes"; then
+    printf 'INFO: no Git remote is currently configured; a remote is optional.\n'
+else
+    printf 'INFO: Git remote names: %s\n' "$configured_remotes"
+fi
 
-if xcodebuild -version >/dev/null 2>&1; then
-    pass "full Xcode is selected"
-    printf 'OPEN: physical-iPad, live-SSH, RSS, archive privacy report, and App Store review gates still require their named environments.\n'
+if xcodebuild -version >/dev/null 2>&1 && ! xcode-select -p | /usr/bin/grep -q '/CommandLineTools$'; then
+    derived_data=$(mktemp -d "${TMPDIR:-/tmp}/LiteTerm-Verify-DerivedData.XXXXXX")
+    xcodebuild \
+        -project LiteTerm.xcodeproj \
+        -scheme LiteTerm \
+        -destination 'generic/platform=iOS Simulator' \
+        -derivedDataPath "$derived_data" \
+        CODE_SIGNING_ALLOWED=NO \
+        build-for-testing
+    pass "full-Xcode iOS Simulator build-for-testing"
+    printf 'OPEN: simulator test execution, physical-iPad, live-SSH, RSS, archive privacy report, and App Store review still require their named environments.\n'
 else
     printf 'OPEN/SKIP: full Xcode is not selected; app build, simulator/device tests, archive privacy report, RSS, live SSH, and App Store review are not passed.\n'
 fi

@@ -7,12 +7,14 @@ LiteTerm is an iPad-first terminal with one active terminal session. Local mode 
 - `LiteTermCore` is Foundation-only. It owns Local parsing/filesystem containment, bounded terminal state, host metadata, host-key policy, reconnect policy, and Local → SSH → Local flow state.
 - The `LiteTerm` app owns SwiftUI/UIKit, SwiftTerm, Files authorization and security-scoped bookmarks, coordinated file access, native editing, Keychain, and SwiftNIO SSH over NIOTransportServices.
 - Exactly one terminal mode/session is active. A new SSH connection supersedes the old generation, manual disconnect cancels retry intent, and stale callbacks cannot mutate the current session.
-- Local input and each in-memory Local history entry are capped at 64 KiB; history is capped at 2,000 entries; SwiftTerm scrollback is capped at 2,000 lines; `cat` and `edit` are capped at 5 MiB; pending SSH output is capped at 8 MiB and delivered to the UI in batches no larger than 64 KiB.
+- Local input, each Local input batch, and each in-memory command-history entry are capped at 16 KiB; one reduction emits at most 128 events; command history is capped at 200 entries and 128 KiB total. SwiftTerm scrollback remains capped at 2,000 lines; `cat` and `edit` are capped at 5 MiB; pending SSH output is capped at 8 MiB and delivered to the UI in batches no larger than 64 KiB.
 - V0.1 does not include SFTP, port forwarding, plugins, cloud sync, local Unix/process execution, VMs, bundled language runtimes, or background keepalive.
 
-The exact Local command set is `pwd`, `ls`, `cd`, `cat`, `mkdir`, `touch`, `cp`, `mv`, `rm`, `clear`, and `edit`. There are no pipes, redirection, glob expansion, scripts, downloaded commands, or `Process`/`NSTask` execution. Absolute command paths are virtual paths under the selected workspace. `rm` removes one regular file only and rejects the workspace root and directories. `edit` opens the native SwiftUI editor; it does not execute an editor binary.
+The exact Local command set is `pwd`, `ls`, `cd`, `cat`, `mkdir`, `touch`, `cp`, `mv`, `rm`, `clear`, and `edit`. There are no pipes, redirection, glob expansion, scripts, downloaded commands, or `Process`/`NSTask` execution. Absolute command paths are virtual paths under the selected workspace. `rm` creates a confirmation request showing the exact one-file target and deletes only after the user chooses Delete; cancellation, mode/root changes, and superseding commands invalidate the request. It rejects the workspace root and directories and never removes recursively. `edit` opens the native SwiftUI editor; it does not execute an editor binary. Local Up/Down navigates the bounded command history.
 
-Files access is limited to App Documents and a directory the user explicitly chooses with the system folder picker. External access uses one security-scoped bookmark and coordinated file operations; stale/revoked authorization returns to App Documents and requires re-selection.
+Files access is limited to App Documents and a directory the user explicitly chooses with the system folder picker. External access uses one security-scoped bookmark and coordinated file operations. If replacement and restoration of an external scope both fail, the authorization store and terminal root reconcile to App Documents, expose the error, and require re-selection.
+
+The app privacy manifest declares app-only UserDefaults reason `CA92.1` and FileTimestamp reasons `C617.1` plus `3B52.1`. The separate `LiteTermCore` framework manifest declares only the two FileTimestamp reasons. Both declare no tracking, tracking domains, or collected-data types. These source declarations still require an archive-generated privacy report check.
 
 ## SSH, authentication, and trust
 
@@ -28,17 +30,17 @@ Direct packages are pinned by immutable revision in `project.yml`: SwiftTerm 1.1
 
 ## Portable candidate checks
 
-The repository currently has no Git remote configured. From the repository root:
+A Git remote is optional; this working repository currently has none configured. Remote presence or absence is informational, not a correctness gate. From the repository root:
 
 ```sh
 ./scripts/run-core-tests.sh
 swift test
 ./scripts/verify-project.sh
 git diff --check
-/usr/bin/plutil -lint LiteTerm/Resources/Info.plist LiteTerm/Resources/PrivacyInfo.xcprivacy LiteTerm.xcodeproj/project.pbxproj
+/usr/bin/plutil -lint LiteTerm/Resources/Info.plist LiteTerm/Resources/PrivacyInfo.xcprivacy Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy LiteTerm.xcodeproj/project.pbxproj
 ```
 
-`swift test` compiles the standard test targets in the current Command Line Tools setup; `run-core-tests.sh` is the command that actually executes the custom Core behavior runner. `verify-project.sh` performs read-only checks on tracked sources (Swift build output under `.build` is expected). Its portable success is a candidate check, not a release pass.
+`swift test` compiles the standard test targets in the current Command Line Tools setup; `run-core-tests.sh` is the command that actually executes the custom Core behavior runner. `verify-project.sh` performs read-only checks on tracked sources (Swift build output under `.build` is expected). When full Xcode is selected it additionally runs a generic iOS Simulator `build-for-testing`; without full Xcode that gate is explicitly `OPEN/SKIP`. Portable success is a candidate check, not a release pass.
 
 ## Full Xcode, iPad, live SSH, and RSS gates
 

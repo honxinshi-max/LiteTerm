@@ -1,9 +1,11 @@
 import Foundation
 
-public struct DeletionConfirmationRequest: Equatable, Sendable {
+public struct DeletionConfirmationRequest: Equatable, Identifiable, Sendable {
+    public let id: UUID
     public let targetURL: URL
 
-    public init(targetURL: URL) {
+    public init(id: UUID = UUID(), targetURL: URL) {
+        self.id = id
         self.targetURL = targetURL
     }
 }
@@ -35,11 +37,10 @@ public actor LocalShell {
     private let parser = ShellCommandParser()
     private let fileSystem: any LocalFileSystemAccess
     private var currentDirectoryURL: URL
-    private var history: TerminalHistory
+    private var pendingDeletionRequest: DeletionConfirmationRequest?
 
     public init(
         rootURL: URL,
-        historyLimit: Int = 2_000,
         fileSystem: (any LocalFileSystemAccess)? = nil
     ) {
         let bootstrapFileSystem: any LocalFileSystemAccess = fileSystem ?? LocalFileSystem(rootURL: rootURL)
@@ -52,11 +53,10 @@ public actor LocalShell {
         self.rootURL = resolvedRoot
         self.fileSystem = fileSystem ?? LocalFileSystem(rootURL: resolvedRoot)
         self.currentDirectoryURL = resolvedRoot
-        self.history = TerminalHistory(limit: historyLimit)
     }
 
     public func execute(_ input: String) async -> ShellExecution {
-        history.append(input)
+        pendingDeletionRequest = nil
 
         do {
             let command = try parser.parse(input)
@@ -69,6 +69,28 @@ public actor LocalShell {
         } catch {
             return ShellExecution(outputLines: [message(for: error)])
         }
+    }
+
+    public func confirmDeletion(_ request: DeletionConfirmationRequest) async -> ShellExecution {
+        guard pendingDeletionRequest == request else {
+            return ShellExecution(outputLines: ["Error: deletion request expired"])
+        }
+        pendingDeletionRequest = nil
+        do {
+            try fileSystem.removeFile(at: request.targetURL)
+            return ShellExecution()
+        } catch {
+            return ShellExecution(outputLines: [message(for: error)])
+        }
+    }
+
+    public func cancelDeletion(_ request: DeletionConfirmationRequest) async {
+        guard pendingDeletionRequest == request else { return }
+        pendingDeletionRequest = nil
+    }
+
+    public func invalidatePendingDeletion() async {
+        pendingDeletionRequest = nil
     }
 
     private func execute(_ command: ShellCommand, resolver: WorkspacePathResolver) throws -> ShellExecution {
@@ -102,8 +124,16 @@ public actor LocalShell {
             try fileSystem.moveItem(from: resolver.resolve(source), to: resolver.resolve(destination))
             return ShellExecution()
         case let .remove(path):
-            try fileSystem.removeFile(at: resolver.resolve(path))
-            return ShellExecution()
+            let target = try resolver.resolve(path)
+            guard target.path != rootURL.path else {
+                throw LocalFileSystemError.workspaceRootRemoval
+            }
+            guard try !fileSystem.isDirectory(at: target) else {
+                throw LocalFileSystemError.directoryRemoval
+            }
+            let request = DeletionConfirmationRequest(targetURL: target)
+            pendingDeletionRequest = request
+            return ShellExecution(deletionConfirmationRequest: request)
         case .clear:
             return ShellExecution(clearRequested: true)
         case let .edit(path):

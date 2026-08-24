@@ -19,8 +19,6 @@ public struct TerminalFlowStateReducer: Sendable {
         activeWorkspaceID = initialWorkspaceID
     }
 
-    public var activeTerminalSessionCount: Int { 1 }
-
     public var activeSSHConnectionCount: Int {
         guard sshConnectionGeneration != nil else { return 0 }
         switch sshConnectionState {

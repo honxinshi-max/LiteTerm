@@ -33,6 +33,7 @@ final class TerminalSessionCoordinator: ObservableObject {
     var onRemoteInput: RemoteInputHandler?
     var onRemoteResize: RemoteResizeHandler?
     var onEditorRequested: ((URL) -> Void)?
+    var onDeletionConfirmationChanged: ((DeletionConfirmationRequest?) -> Void)?
 
     private weak var terminalView: TerminalView?
     private var localShell: LocalShell
@@ -43,6 +44,13 @@ final class TerminalSessionCoordinator: ObservableObject {
     private var didPresentLocalPrompt = false
     private var flowState: TerminalFlowStateReducer
     private var isLocalInputSuspended = false
+    private var pendingDeletion: (
+        request: DeletionConfirmationRequest,
+        shell: LocalShell,
+        generation: UInt64
+    )?
+
+    var activeWorkspaceID: String { flowState.activeWorkspaceID }
 
     init(rootURL: URL, coordinateFileAccess: Bool = false) {
         let fileSystem: (any LocalFileSystemAccess)? = coordinateFileAccess
@@ -66,6 +74,7 @@ final class TerminalSessionCoordinator: ObservableObject {
 
     func setMode(_ newMode: TerminalMode) {
         guard mode != newMode else { return }
+        invalidatePendingDeletion()
         mode = newMode
         switch newMode {
         case .local:
@@ -97,6 +106,7 @@ final class TerminalSessionCoordinator: ObservableObject {
 
     func installLocalRoot(_ rootURL: URL, coordinateFileAccess: Bool = false) {
         assert(isLocalInputSuspended, "Local root replacement requires a drained input queue")
+        invalidatePendingDeletion()
         let fileSystem: (any LocalFileSystemAccess)? = coordinateFileAccess
             ? CoordinatedLocalFileSystem(rootURL: rootURL)
             : nil
@@ -134,6 +144,18 @@ final class TerminalSessionCoordinator: ObservableObject {
 
     func handleShortcut(_ key: TerminalShortcutKey) {
         guard mode != .local || !isLocalInputSuspended else { return }
+        if mode == .local {
+            switch key {
+            case .up:
+                applyLocalEvents(localInputReducer.navigateHistory(.previous))
+                return
+            case .down:
+                applyLocalEvents(localInputReducer.navigateHistory(.next))
+                return
+            default:
+                break
+            }
+        }
         let bytes = shortcutReducer.handleShortcut(key)
         publishShortcutState()
         routeInput(bytes)
@@ -144,15 +166,49 @@ final class TerminalSessionCoordinator: ObservableObject {
         let generation = flowState.generation
         localOperationQueue.enqueue { [weak self] in
             let execution = await shell.execute(command)
-            await self?.present(execution, generation: generation)
+            await self?.present(execution, shell: shell, generation: generation)
         }
     }
 
-    func receiveRemoteBytes(_ bytes: [UInt8]) {
-        guard mode == .ssh else { return }
+    @discardableResult
+    func receiveRemoteBytes(_ bytes: [UInt8]) -> Bool {
+        guard mode == .ssh, flowState.activeMode == .ssh else { return false }
         let sanitized = remoteOutputSanitizer.sanitize(bytes)
-        guard !sanitized.isEmpty else { return }
+        guard !sanitized.isEmpty else { return false }
         terminalView?.feed(byteArray: sanitized[...])
+        return true
+    }
+
+    func confirmDeletion(_ request: DeletionConfirmationRequest) {
+        guard
+            let pendingDeletion,
+            pendingDeletion.request == request,
+            mode == .local,
+            flowState.activeMode == .local,
+            flowState.generation == pendingDeletion.generation
+        else {
+            invalidatePendingDeletion()
+            return
+        }
+        self.pendingDeletion = nil
+        onDeletionConfirmationChanged?(nil)
+        localOperationQueue.enqueue { [weak self] in
+            let execution = await pendingDeletion.shell.confirmDeletion(request)
+            await self?.present(
+                execution,
+                shell: pendingDeletion.shell,
+                generation: pendingDeletion.generation
+            )
+        }
+    }
+
+    func cancelDeletion(_ request: DeletionConfirmationRequest) {
+        guard let pendingDeletion, pendingDeletion.request == request else { return }
+        self.pendingDeletion = nil
+        onDeletionConfirmationChanged?(nil)
+        localOperationQueue.enqueue {
+            await pendingDeletion.shell.cancelDeletion(request)
+        }
     }
 
     func selectSSHHost(_ hostID: UUID) {
@@ -197,11 +253,23 @@ final class TerminalSessionCoordinator: ObservableObject {
     }
 
     private func processLocalInput(_ bytes: [UInt8]) {
+        if bytes == [0x1B, 0x5B, 0x41] {
+            applyLocalEvents(localInputReducer.navigateHistory(.previous))
+            return
+        }
+        if bytes == [0x1B, 0x5B, 0x42] {
+            applyLocalEvents(localInputReducer.navigateHistory(.next))
+            return
+        }
         if bytes.first == 0x1B {
             return
         }
 
-        for event in localInputReducer.reduce(bytes) {
+        applyLocalEvents(localInputReducer.reduce(bytes))
+    }
+
+    private func applyLocalEvents(_ events: [LocalTerminalInputEvent]) {
+        for event in events {
             switch event {
             case let .echo(echoedBytes):
                 terminalView?.feed(byteArray: echoedBytes[...])
@@ -209,10 +277,13 @@ final class TerminalSessionCoordinator: ObservableObject {
                 terminalView?.feed(text: "\u{8} \u{8}")
             case .interrupt:
                 terminalView?.feed(text: "^C\r\n")
-                let generation = localGeneration
+                let generation = flowState.generation
                 localOperationQueue.enqueue { [weak self] in
                     await self?.presentPrompt(generation: generation)
                 }
+            case let .replaceLine(replacement):
+                terminalView?.feed(text: "\r\u{1B}[2K$ ")
+                terminalView?.feed(byteArray: replacement[...])
             case let .submit(command):
                 terminalView?.feed(text: "\r\n")
                 runLocalCommand(command)
@@ -220,7 +291,11 @@ final class TerminalSessionCoordinator: ObservableObject {
         }
     }
 
-    private func present(_ execution: ShellExecution, generation: UInt64) {
+    private func present(
+        _ execution: ShellExecution,
+        shell: LocalShell,
+        generation: UInt64
+    ) {
         guard
             mode == .local,
             flowState.activeMode == .local,
@@ -234,6 +309,10 @@ final class TerminalSessionCoordinator: ObservableObject {
         }
         if let editorURL = execution.editorURL {
             onEditorRequested?(editorURL)
+        }
+        if let request = execution.deletionConfirmationRequest {
+            pendingDeletion = (request, shell, generation)
+            onDeletionConfirmationChanged?(request)
         }
         terminalView?.feed(text: "$ ")
     }
@@ -249,5 +328,11 @@ final class TerminalSessionCoordinator: ObservableObject {
 
     private func publishShortcutState() {
         isControlLatched = shortcutReducer.isControlLatched
+    }
+
+    private func invalidatePendingDeletion() {
+        guard pendingDeletion != nil else { return }
+        pendingDeletion = nil
+        onDeletionConfirmationChanged?(nil)
     }
 }

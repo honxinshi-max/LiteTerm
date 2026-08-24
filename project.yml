@@ -31,7 +31,11 @@ targets:
     type: framework
     platform: iOS
     sources:
-      - Sources/LiteTermCore
+      - path: Sources/LiteTermCore
+        excludes:
+          - Resources/PrivacyInfo.xcprivacy
+      - path: Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "2"
@@ -40,7 +44,11 @@ targets:
     type: application
     platform: iOS
     sources:
-      - LiteTerm
+      - path: LiteTerm
+        excludes:
+          - Resources/PrivacyInfo.xcprivacy
+      - path: LiteTerm/Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
       - path: THIRD_PARTY_NOTICES.md
         buildPhase: resources
     dependencies:
@@ -105,3 +113,14 @@ targets:
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "2"
+
+schemes:
+  LiteTerm:
+    build:
+      targets:
+        LiteTerm: all
+    test:
+      targets:
+        - LiteTermCoreTests
+        - LiteTermSSHTests
+        - LiteTermUITests
