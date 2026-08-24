@@ -43,3 +43,24 @@ The initial command-line-toolchain investigation also found that this Mac lacks 
 
 - Full Xcode is unavailable, so `xcodebuild -list -project LiteTerm.xcodeproj` cannot run; project validation is structural only. iPad compilation and UI test execution remain a later full-Xcode gate.
 - The package-local runner is a necessary environment adaptation, not a substitute for normal XCTest execution under full Xcode. Revalidate the two XCTest files with full Xcode before promoting this candidate beyond the current development slice.
+
+## Fix Round 1
+
+### Changes
+
+- Clamped every `TerminalHistory` requested limit to `0...2_000` using the private `maximumLineCount` constant. Requests such as `10_000` cannot allocate or retain more than 2,000 lines.
+- Added the oversized-limit regression to both `Tests/LiteTermCoreTests/TerminalHistoryTests.swift` and the actually executable `Tests/TestRunner/main.swift`.
+- Set `TARGETED_DEVICE_FAMILY: "2"` globally and on the `LiteTerm` XcodeGen application target (the latter prevents XcodeGen's application preset from restoring `1,2`).
+- Added `INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad` with portrait, portrait upside down, landscape left, and landscape right; regenerated `LiteTerm.xcodeproj` using XcodeGen 2.45.4.
+
+### Covering tests and results
+
+- `testOversizedLimitClampsToTwoThousandNewestLines` appends `"0"` through `"2000"` to `TerminalHistory(limit: 10_000)` and asserts count `2_000`, first line `"1"`, and final line `"2000"`.
+- `swift run LiteTermCoreTestRunner` exits 0 after the fix and prints `PASS: 7 LiteTermCore terminal primitive checks`.
+- `swift test --filter 'TerminalHistoryTests|ControlKeyEncoderTests'` exits 0 and `swift test` exits 0 (both compile the SwiftPM test target cleanly on this CLT-only host).
+- Structural scan of `LiteTerm.xcodeproj/project.pbxproj` verifies the app Debug and Release configurations each have `TARGETED_DEVICE_FAMILY = 2;` and the exact four iPad orientation values under `INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad`.
+
+### TDD RED/GREEN evidence
+
+1. RED: after adding the oversized-limit regression but before changing production code, `swift run LiteTermCoreTestRunner` exited 1 with `FAIL: oversized history limit is capped at 2,000 lines` and `FAIL: oversized history drops its oldest line`.
+2. GREEN: after replacing `max(0, limit)` with `min(max(0, limit), Self.maximumLineCount)`, the runner exited 0 and all seven behavioral checks passed.

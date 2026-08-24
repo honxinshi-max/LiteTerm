@@ -9,6 +9,7 @@ struct LiteTermCoreTestRunner {
         checkHistoryDropsOldestLine(&failures)
         checkHistoryClear(&failures)
         checkZeroHistoryLimit(&failures)
+        checkOversizedHistoryLimit(&failures)
         checkControlLettersAndBracket(&failures)
         checkControlUppercasing(&failures)
         checkUnsupportedControlCharacters(&failures)
@@ -18,7 +19,7 @@ struct LiteTermCoreTestRunner {
             exit(EXIT_FAILURE)
         }
 
-        print("PASS: 6 LiteTermCore terminal primitive checks")
+        print("PASS: 7 LiteTermCore terminal primitive checks")
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -40,6 +41,18 @@ struct LiteTermCoreTestRunner {
         var history = TerminalHistory(limit: 0)
         history.append("one")
         expect(history.lines == [], "zero history limit retains no lines", &failures)
+    }
+
+    private static func checkOversizedHistoryLimit(_ failures: inout [String]) {
+        var history = TerminalHistory(limit: 10_000)
+
+        for index in 0...2_000 {
+            history.append("\(index)")
+        }
+
+        expect(history.lines.count == 2_000, "oversized history limit is capped at 2,000 lines", &failures)
+        expect(history.lines.first == "1", "oversized history drops its oldest line", &failures)
+        expect(history.lines.last == "2000", "oversized history retains its newest line", &failures)
     }
 
     private static func checkControlLettersAndBracket(_ failures: inout [String]) {

@@ -27,4 +27,16 @@ final class TerminalHistoryTests: XCTestCase {
 
         XCTAssertEqual(history.lines, [])
     }
+
+    func testOversizedLimitClampsToTwoThousandNewestLines() {
+        var history = TerminalHistory(limit: 10_000)
+
+        for index in 0...2_000 {
+            history.append("\(index)")
+        }
+
+        XCTAssertEqual(history.lines.count, 2_000)
+        XCTAssertEqual(history.lines.first, "1")
+        XCTAssertEqual(history.lines.last, "2000")
+    }
 }

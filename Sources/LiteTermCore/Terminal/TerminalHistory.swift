@@ -1,11 +1,13 @@
 public struct TerminalHistory: Sendable {
+    private static let maximumLineCount = 2_000
+
     private let limit: Int
     private var buffer: [String?]
     private var startIndex = 0
     private var count = 0
 
     public init(limit: Int = 2_000) {
-        self.limit = max(0, limit)
+        self.limit = min(max(0, limit), Self.maximumLineCount)
         buffer = Array(repeating: nil, count: self.limit)
     }
 
