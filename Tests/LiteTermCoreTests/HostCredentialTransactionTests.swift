@@ -57,6 +57,196 @@ final class HostCredentialTransactionTests: XCTestCase {
         XCTAssertEqual(restartedStates[id], .ready)
     }
 
+    func testCompensationRestoresMetadataBeforeClearingMarkerAndHasNoReadyIntermediateState() throws {
+        let id = UUID(uuidString: "66666666-6666-6666-6666-666666666666")!
+        let originalHost = try SSHHost(
+            id: id,
+            label: "Original",
+            hostname: "old.example",
+            port: 22,
+            username: "old-user",
+            authenticationKind: .password,
+            reconnectPreference: .enabled
+        )
+        let editedHost = try SSHHost(
+            id: id,
+            label: "Edited",
+            hostname: "new.example",
+            port: 2222,
+            username: "new-user",
+            authenticationKind: .password,
+            reconnectPreference: .disabled
+        )
+        let operationLog = TestHostOperationLog()
+        let metadata = TestHostMetadataStore(hosts: [originalHost], operationLog: operationLog)
+        let secrets = TestHostSecretStore(operationLog: operationLog)
+        secrets.seed(Data("old-password".utf8), for: id, kind: .password)
+        secrets.failNextSetKinds = [.password]
+        var coordinator: HostCredentialCoordinator!
+        var observedStates: [(event: String, state: HostCredentialState?)] = []
+        operationLog.onEvent = { event in
+            observedStates.append((event, coordinator.inspect(metadata.hosts)[id]))
+        }
+        coordinator = HostCredentialCoordinator(metadata: metadata, secrets: secrets)
+
+        let outcome = coordinator.upsert(
+            editedHost,
+            password: Data("new-password".utf8),
+            in: [originalHost]
+        )
+
+        let expectedEvents = [
+            "set:credential-repair",
+            "metadata:new.example",
+            "set-failed:password",
+            "set:password",
+            "delete:private-key",
+            "metadata:old.example",
+            "delete:credential-repair"
+        ]
+        XCTAssertEqual(operationLog.events, expectedEvents)
+        XCTAssertEqual(observedStates.map(\.event), expectedEvents)
+        XCTAssertEqual(
+            observedStates.dropLast().map(\.state),
+            Array(repeating: .repairRequired, count: expectedEvents.count - 1)
+        )
+        XCTAssertEqual(observedStates.last?.state, .ready)
+        XCTAssertEqual(outcome.hosts, [originalHost])
+        XCTAssertEqual(outcome.credentialStates[id], .ready)
+    }
+
+    func testFinalMarkerClearFailureNeverReturnsHealthyOriginalState() throws {
+        let id = UUID(uuidString: "77777777-7777-7777-7777-777777777777")!
+        let originalHost = try makeHost(id: id, authenticationKind: .password)
+        let editedHost = try SSHHost(
+            id: id,
+            label: "Edited",
+            hostname: "new.example",
+            port: 2222,
+            username: "new-user",
+            authenticationKind: .password,
+            reconnectPreference: .disabled
+        )
+        let operationLog = TestHostOperationLog()
+        let metadata = TestHostMetadataStore(hosts: [originalHost], operationLog: operationLog)
+        let secrets = TestHostSecretStore(operationLog: operationLog)
+        secrets.seed(Data("old-password".utf8), for: id, kind: .password)
+        secrets.failNextSetKinds = [.password]
+        secrets.failNextDeleteKinds = [.credentialRepair]
+        let coordinator = HostCredentialCoordinator(metadata: metadata, secrets: secrets)
+
+        let outcome = coordinator.upsert(
+            editedHost,
+            password: Data("new-password".utf8),
+            in: [originalHost]
+        )
+
+        XCTAssertEqual(
+            Array(operationLog.events.suffix(2)),
+            ["metadata:server.example", "delete-failed:credential-repair"]
+        )
+        XCTAssertEqual(outcome.hosts, [originalHost])
+        XCTAssertEqual(metadata.hosts, [originalHost])
+        XCTAssertEqual(outcome.credentialStates[id], .repairRequired)
+        XCTAssertEqual(
+            outcome.failure,
+            .compensationFailed(
+                original: .password,
+                rollback: .secret(.credentialRepair)
+            )
+        )
+        XCTAssertEqual(secrets.hasValue(for: id, kind: .credentialRepair), true)
+        XCTAssertEqual(coordinator.inspect(metadata.hosts)[id], .repairRequired)
+    }
+
+    func testCompensationRestoresExistingMarkerOnlyAfterMetadata() throws {
+        let id = UUID(uuidString: "99999999-9999-9999-9999-999999999999")!
+        let originalHost = try makeHost(id: id, authenticationKind: .password)
+        let editedHost = try SSHHost(
+            id: id,
+            label: "Edited",
+            hostname: "new.example",
+            port: 2222,
+            username: "new-user",
+            authenticationKind: .password,
+            reconnectPreference: .disabled
+        )
+        let originalMarker = Data([9])
+        let operationLog = TestHostOperationLog()
+        let metadata = TestHostMetadataStore(hosts: [originalHost], operationLog: operationLog)
+        let secrets = TestHostSecretStore(operationLog: operationLog)
+        secrets.seed(Data("old-password".utf8), for: id, kind: .password)
+        secrets.seed(originalMarker, for: id, kind: .credentialRepair)
+        secrets.failNextSetKinds = [.password]
+        let coordinator = HostCredentialCoordinator(metadata: metadata, secrets: secrets)
+
+        let outcome = coordinator.upsert(
+            editedHost,
+            password: Data("new-password".utf8),
+            in: [originalHost]
+        )
+
+        XCTAssertEqual(
+            Array(operationLog.events.suffix(2)),
+            ["metadata:server.example", "set:credential-repair"]
+        )
+        XCTAssertEqual(secrets.value(for: id, kind: .credentialRepair), originalMarker)
+        XCTAssertEqual(outcome.hosts, [originalHost])
+        XCTAssertEqual(outcome.failure, .secretMutation(.password))
+        XCTAssertEqual(outcome.credentialStates[id], .repairRequired)
+        XCTAssertEqual(coordinator.inspect(metadata.hosts)[id], .repairRequired)
+    }
+
+    func testMetadataRollbackFailureDoesNotAttemptMarkerRestoreOrClearWhenRewriteWouldFail() throws {
+        let id = UUID(uuidString: "88888888-8888-8888-8888-888888888888")!
+        let originalHost = try makeHost(id: id, authenticationKind: .password)
+        let editedHost = try SSHHost(
+            id: id,
+            label: "Edited",
+            hostname: "new.example",
+            port: 2222,
+            username: "new-user",
+            authenticationKind: .password,
+            reconnectPreference: .disabled
+        )
+        let operationLog = TestHostOperationLog()
+        let metadata = TestHostMetadataStore(hosts: [originalHost], operationLog: operationLog)
+        metadata.failingSaveCalls = [2]
+        let secrets = TestHostSecretStore(operationLog: operationLog)
+        secrets.seed(Data("old-password".utf8), for: id, kind: .password)
+        secrets.failNextSetKinds = [.password]
+        secrets.failingSetCallNumbers[.credentialRepair] = [2]
+        let coordinator = HostCredentialCoordinator(metadata: metadata, secrets: secrets)
+
+        let outcome = coordinator.upsert(
+            editedHost,
+            password: Data("new-password".utf8),
+            in: [originalHost]
+        )
+
+        XCTAssertEqual(
+            operationLog.events,
+            [
+                "set:credential-repair",
+                "metadata:new.example",
+                "set-failed:password",
+                "set:password",
+                "delete:private-key",
+                "metadata-failed:server.example"
+            ]
+        )
+        XCTAssertEqual(secrets.setCallCount(for: .credentialRepair), 1)
+        XCTAssertEqual(outcome.hosts, [editedHost])
+        XCTAssertEqual(metadata.hosts, [editedHost])
+        XCTAssertEqual(outcome.credentialStates[id], .repairRequired)
+        XCTAssertEqual(
+            outcome.failure,
+            .compensationFailed(original: .password, rollback: .metadata)
+        )
+        XCTAssertEqual(secrets.hasValue(for: id, kind: .credentialRepair), true)
+        XCTAssertEqual(coordinator.inspect(metadata.hosts)[id], .repairRequired)
+    }
+
     func testPasswordWriteFailureRestoresOriginalEmptyMetadataBeforeRetry() throws {
         let metadata = TestHostMetadataStore()
         let secrets = TestHostSecretStore()
@@ -383,22 +573,36 @@ private enum TestHostStoreFailure: Error {
     case injected
 }
 
+private final class TestHostOperationLog {
+    private(set) var events: [String] = []
+    var onEvent: ((String) -> Void)?
+
+    func record(_ event: String) {
+        events.append(event)
+        onEvent?(event)
+    }
+}
+
 private final class TestHostMetadataStore: HostMetadataStoring {
     var hosts: [SSHHost]
     var saveShouldFail = false
     var failingSaveCalls: Set<Int> = []
     private(set) var saveCallCount = 0
+    private let operationLog: TestHostOperationLog?
 
-    init(hosts: [SSHHost] = []) {
+    init(hosts: [SSHHost] = [], operationLog: TestHostOperationLog? = nil) {
         self.hosts = hosts
+        self.operationLog = operationLog
     }
 
     func save(_ hosts: [SSHHost]) throws {
         saveCallCount += 1
         guard !saveShouldFail, !failingSaveCalls.contains(saveCallCount) else {
+            operationLog?.record("metadata-failed:\(hosts.map(\.hostname).joined(separator: ","))")
             throw TestHostStoreFailure.injected
         }
         self.hosts = hosts
+        operationLog?.record("metadata:\(hosts.map(\.hostname).joined(separator: ","))")
     }
 }
 
@@ -410,10 +614,17 @@ private final class TestHostSecretStore: HostSecretStoring {
 
     var failingSetKinds: Set<HostSecretKind> = []
     var failNextSetKinds: Set<HostSecretKind> = []
+    var failingSetCallNumbers: [HostSecretKind: Set<Int>] = [:]
     var failingDeleteKinds: Set<HostSecretKind> = []
     var failNextDeleteKinds: Set<HostSecretKind> = []
     private(set) var mutationCount = 0
     private var values: [Key: Data] = [:]
+    private var setCallCounts: [HostSecretKind: Int] = [:]
+    private let operationLog: TestHostOperationLog?
+
+    init(operationLog: TestHostOperationLog? = nil) {
+        self.operationLog = operationLog
+    }
 
     var hostIDsWithValues: Set<UUID> {
         Set(values.keys.map(\.hostID))
@@ -431,15 +642,27 @@ private final class TestHostSecretStore: HostSecretStoring {
         values[Key(hostID: hostID, kind: kind)]
     }
 
+    func setCallCount(for kind: HostSecretKind) -> Int {
+        setCallCounts[kind, default: 0]
+    }
+
     func set(_ data: Data, for hostID: UUID, kind: HostSecretKind) throws {
         mutationCount += 1
+        setCallCounts[kind, default: 0] += 1
+        if failingSetCallNumbers[kind, default: []].contains(setCallCounts[kind, default: 0]) {
+            operationLog?.record("set-failed:\(kind.rawValue)")
+            throw TestHostStoreFailure.injected
+        }
         if failNextSetKinds.remove(kind) != nil {
+            operationLog?.record("set-failed:\(kind.rawValue)")
             throw TestHostStoreFailure.injected
         }
         guard !failingSetKinds.contains(kind) else {
+            operationLog?.record("set-failed:\(kind.rawValue)")
             throw TestHostStoreFailure.injected
         }
         values[Key(hostID: hostID, kind: kind)] = data
+        operationLog?.record("set:\(kind.rawValue)")
     }
 
     func data(for hostID: UUID, kind: HostSecretKind) throws -> Data? {
@@ -449,11 +672,14 @@ private final class TestHostSecretStore: HostSecretStoring {
     func delete(for hostID: UUID, kind: HostSecretKind) throws {
         mutationCount += 1
         if failNextDeleteKinds.remove(kind) != nil {
+            operationLog?.record("delete-failed:\(kind.rawValue)")
             throw TestHostStoreFailure.injected
         }
         guard !failingDeleteKinds.contains(kind) else {
+            operationLog?.record("delete-failed:\(kind.rawValue)")
             throw TestHostStoreFailure.injected
         }
         values.removeValue(forKey: Key(hostID: hostID, kind: kind))
+        operationLog?.record("delete:\(kind.rawValue)")
     }
 }

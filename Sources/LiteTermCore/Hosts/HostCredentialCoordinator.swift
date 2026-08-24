@@ -279,16 +279,6 @@ public struct HostCredentialCoordinator {
             record(.secret(.privateKey))
         }
 
-        do {
-            try restore(
-                credentialSnapshot.credentialRepair,
-                for: hostID,
-                kind: .credentialRepair
-            )
-        } catch {
-            record(.secret(.credentialRepair))
-        }
-
         let metadataRestored: Bool
         do {
             try metadata.save(originalHosts)
@@ -298,17 +288,23 @@ public struct HostCredentialCoordinator {
             record(.metadata)
         }
 
+        if rollbackBoundaries.isEmpty {
+            do {
+                try restore(
+                    credentialSnapshot.credentialRepair,
+                    for: hostID,
+                    kind: .credentialRepair
+                )
+            } catch {
+                record(.secret(.credentialRepair))
+            }
+        }
+
         guard !rollbackBoundaries.isEmpty else {
             return outcome(
                 hosts: originalHosts,
                 failure: .secretMutation(originalFailure)
             )
-        }
-
-        do {
-            try secrets.set(Data([1]), for: hostID, kind: .credentialRepair)
-        } catch {
-            record(.secret(.credentialRepair))
         }
 
         let rollbackFailure: HostCredentialCompensationFailure

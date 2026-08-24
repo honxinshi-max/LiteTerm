@@ -728,6 +728,166 @@ struct LiteTermCoreTestRunner {
             expect(replacementCoordinator.inspect(replacementMetadata.hosts)[replacementID] == .ready, "restart inspection sees the coherent original host", &failures)
             expect(replacementSecrets.value(for: replacementID, kind: .credentialRepair) == nil, "successful replacement compensation leaves no repair marker", &failures)
 
+            let orderID = UUID(uuidString: "66666666-6666-6666-6666-666666666666")!
+            let orderOriginalHost = try SSHHost(
+                id: orderID,
+                label: "Original",
+                hostname: "old.example",
+                port: 22,
+                username: "old-user",
+                authenticationKind: .password,
+                reconnectPreference: .enabled
+            )
+            let orderEditedHost = try SSHHost(
+                id: orderID,
+                label: "Edited",
+                hostname: "new.example",
+                port: 2222,
+                username: "new-user",
+                authenticationKind: .password,
+                reconnectPreference: .disabled
+            )
+            let orderLog = RunnerHostOperationLog()
+            let orderMetadata = RunnerHostMetadataStore(hosts: [orderOriginalHost], operationLog: orderLog)
+            let orderSecrets = RunnerHostSecretStore(operationLog: orderLog)
+            orderSecrets.seed(Data("old-password".utf8), for: orderID, kind: .password)
+            orderSecrets.failNextSetKinds = [.password]
+            var orderCoordinator: HostCredentialCoordinator!
+            var orderStates: [HostCredentialState?] = []
+            orderLog.onEvent = { _ in
+                orderStates.append(orderCoordinator.inspect(orderMetadata.hosts)[orderID])
+            }
+            orderCoordinator = HostCredentialCoordinator(metadata: orderMetadata, secrets: orderSecrets)
+            let orderFailure = orderCoordinator.upsert(
+                orderEditedHost,
+                password: Data("new-password".utf8),
+                in: [orderOriginalHost]
+            )
+            let expectedOrderEvents = [
+                "set:credential-repair",
+                "metadata:new.example",
+                "set-failed:password",
+                "set:password",
+                "delete:private-key",
+                "metadata:old.example",
+                "delete:credential-repair"
+            ]
+            expect(orderLog.events == expectedOrderEvents, "credential compensation restores metadata before marker clear", &failures)
+            expect(orderStates.dropLast().allSatisfy { $0 == .repairRequired }, "credential compensation has no ready intermediate state", &failures)
+            expect(orderStates.last == .ready, "credential compensation becomes ready only after final marker clear", &failures)
+            expect(orderFailure.hosts == [orderOriginalHost] && orderFailure.credentialStates[orderID] == .ready, "ordered compensation returns the coherent original host", &failures)
+
+            let clearFailureID = UUID(uuidString: "77777777-7777-7777-7777-777777777777")!
+            let clearFailureOriginalHost = try runnerHost(id: clearFailureID, authenticationKind: .password)
+            let clearFailureEditedHost = try SSHHost(
+                id: clearFailureID,
+                label: "Edited",
+                hostname: "new.example",
+                port: 2222,
+                username: "new-user",
+                authenticationKind: .password,
+                reconnectPreference: .disabled
+            )
+            let clearFailureLog = RunnerHostOperationLog()
+            let clearFailureMetadata = RunnerHostMetadataStore(hosts: [clearFailureOriginalHost], operationLog: clearFailureLog)
+            let clearFailureSecrets = RunnerHostSecretStore(operationLog: clearFailureLog)
+            clearFailureSecrets.seed(Data("old-password".utf8), for: clearFailureID, kind: .password)
+            clearFailureSecrets.failNextSetKinds = [.password]
+            clearFailureSecrets.failNextDeleteKinds = [.credentialRepair]
+            let clearFailureCoordinator = HostCredentialCoordinator(
+                metadata: clearFailureMetadata,
+                secrets: clearFailureSecrets
+            )
+            let clearFailure = clearFailureCoordinator.upsert(
+                clearFailureEditedHost,
+                password: Data("new-password".utf8),
+                in: [clearFailureOriginalHost]
+            )
+            let clearFailureMetadataIndex = clearFailureLog.events.firstIndex(of: "metadata:server.example")
+            let clearFailureMarkerIndex = clearFailureLog.events.firstIndex(of: "delete-failed:credential-repair")
+            expect(
+                clearFailureMetadataIndex != nil && clearFailureMarkerIndex != nil && clearFailureMetadataIndex! < clearFailureMarkerIndex!,
+                "marker-clear failure occurs only after metadata restoration",
+                &failures
+            )
+            expect(clearFailureLog.events.last == "delete-failed:credential-repair", "marker-clear failure does not rewrite or clear the marker", &failures)
+            expect(clearFailure.failure == .compensationFailed(original: .password, rollback: .secret(.credentialRepair)), "marker-clear failure identifies its non-secret rollback boundary", &failures)
+            expect(clearFailure.credentialStates[clearFailureID] == .repairRequired && clearFailureCoordinator.inspect(clearFailureMetadata.hosts)[clearFailureID] == .repairRequired, "marker-clear failure remains repair-required after restart", &failures)
+
+            let existingMarkerID = UUID(uuidString: "99999999-9999-9999-9999-999999999999")!
+            let existingMarkerOriginalHost = try runnerHost(id: existingMarkerID, authenticationKind: .password)
+            let existingMarkerEditedHost = try SSHHost(
+                id: existingMarkerID,
+                label: "Edited",
+                hostname: "new.example",
+                port: 2222,
+                username: "new-user",
+                authenticationKind: .password,
+                reconnectPreference: .disabled
+            )
+            let originalMarker = Data([9])
+            let existingMarkerLog = RunnerHostOperationLog()
+            let existingMarkerMetadata = RunnerHostMetadataStore(hosts: [existingMarkerOriginalHost], operationLog: existingMarkerLog)
+            let existingMarkerSecrets = RunnerHostSecretStore(operationLog: existingMarkerLog)
+            existingMarkerSecrets.seed(Data("old-password".utf8), for: existingMarkerID, kind: .password)
+            existingMarkerSecrets.seed(originalMarker, for: existingMarkerID, kind: .credentialRepair)
+            existingMarkerSecrets.failNextSetKinds = [.password]
+            let existingMarkerCoordinator = HostCredentialCoordinator(
+                metadata: existingMarkerMetadata,
+                secrets: existingMarkerSecrets
+            )
+            let existingMarkerFailure = existingMarkerCoordinator.upsert(
+                existingMarkerEditedHost,
+                password: Data("new-password".utf8),
+                in: [existingMarkerOriginalHost]
+            )
+            expect(Array(existingMarkerLog.events.suffix(2)) == ["metadata:server.example", "set:credential-repair"], "existing marker is restored only after original metadata", &failures)
+            expect(existingMarkerSecrets.value(for: existingMarkerID, kind: .credentialRepair) == originalMarker, "compensation restores the original marker value", &failures)
+            expect(existingMarkerFailure.hosts == [existingMarkerOriginalHost] && existingMarkerFailure.credentialStates[existingMarkerID] == .repairRequired, "original repair state remains visible after compensation", &failures)
+
+            let markerGuardID = UUID(uuidString: "88888888-8888-8888-8888-888888888888")!
+            let markerGuardOriginalHost = try runnerHost(id: markerGuardID, authenticationKind: .password)
+            let markerGuardEditedHost = try SSHHost(
+                id: markerGuardID,
+                label: "Edited",
+                hostname: "new.example",
+                port: 2222,
+                username: "new-user",
+                authenticationKind: .password,
+                reconnectPreference: .disabled
+            )
+            let markerGuardLog = RunnerHostOperationLog()
+            let markerGuardMetadata = RunnerHostMetadataStore(hosts: [markerGuardOriginalHost], operationLog: markerGuardLog)
+            markerGuardMetadata.failingSaveCalls = [2]
+            let markerGuardSecrets = RunnerHostSecretStore(operationLog: markerGuardLog)
+            markerGuardSecrets.seed(Data("old-password".utf8), for: markerGuardID, kind: .password)
+            markerGuardSecrets.failNextSetKinds = [.password]
+            markerGuardSecrets.failingSetCallNumbers[.credentialRepair] = [2]
+            let markerGuardCoordinator = HostCredentialCoordinator(
+                metadata: markerGuardMetadata,
+                secrets: markerGuardSecrets
+            )
+            let markerGuardFailure = markerGuardCoordinator.upsert(
+                markerGuardEditedHost,
+                password: Data("new-password".utf8),
+                in: [markerGuardOriginalHost]
+            )
+            expect(
+                markerGuardLog.events == [
+                    "set:credential-repair",
+                    "metadata:new.example",
+                    "set-failed:password",
+                    "set:password",
+                    "delete:private-key",
+                    "metadata-failed:server.example"
+                ],
+                "metadata rollback failure performs no marker restore or clear",
+                &failures
+            )
+            expect(markerGuardSecrets.setCallCount(for: .credentialRepair) == 1, "metadata rollback failure never attempts the injected marker rewrite", &failures)
+            expect(markerGuardFailure.failure == .compensationFailed(original: .password, rollback: .metadata), "metadata rollback failure reports only the attempted boundary", &failures)
+            expect(markerGuardFailure.credentialStates[markerGuardID] == .repairRequired && markerGuardCoordinator.inspect(markerGuardMetadata.hosts)[markerGuardID] == .repairRequired, "metadata rollback failure keeps marker protection across restart", &failures)
+
             let newPasswordHost = try runnerHost(authenticationKind: .password)
             let passwordMetadata = RunnerHostMetadataStore()
             let passwordSecrets = RunnerHostSecretStore()
@@ -1035,22 +1195,36 @@ private enum RunnerHostStoreFailure: Error {
     case injected
 }
 
+private final class RunnerHostOperationLog {
+    private(set) var events: [String] = []
+    var onEvent: ((String) -> Void)?
+
+    func record(_ event: String) {
+        events.append(event)
+        onEvent?(event)
+    }
+}
+
 private final class RunnerHostMetadataStore: HostMetadataStoring {
     var hosts: [SSHHost]
     var saveShouldFail = false
     var failingSaveCalls: Set<Int> = []
     private(set) var saveCallCount = 0
+    private let operationLog: RunnerHostOperationLog?
 
-    init(hosts: [SSHHost] = []) {
+    init(hosts: [SSHHost] = [], operationLog: RunnerHostOperationLog? = nil) {
         self.hosts = hosts
+        self.operationLog = operationLog
     }
 
     func save(_ hosts: [SSHHost]) throws {
         saveCallCount += 1
         guard !saveShouldFail, !failingSaveCalls.contains(saveCallCount) else {
+            operationLog?.record("metadata-failed:\(hosts.map(\.hostname).joined(separator: ","))")
             throw RunnerHostStoreFailure.injected
         }
         self.hosts = hosts
+        operationLog?.record("metadata:\(hosts.map(\.hostname).joined(separator: ","))")
     }
 }
 
@@ -1062,10 +1236,17 @@ private final class RunnerHostSecretStore: HostSecretStoring {
 
     var failingSetKinds: Set<HostSecretKind> = []
     var failNextSetKinds: Set<HostSecretKind> = []
+    var failingSetCallNumbers: [HostSecretKind: Set<Int>] = [:]
     var failingDeleteKinds: Set<HostSecretKind> = []
     var failNextDeleteKinds: Set<HostSecretKind> = []
     private(set) var mutationCount = 0
     private var values: [Key: Data] = [:]
+    private var setCallCounts: [HostSecretKind: Int] = [:]
+    private let operationLog: RunnerHostOperationLog?
+
+    init(operationLog: RunnerHostOperationLog? = nil) {
+        self.operationLog = operationLog
+    }
 
     var hostIDsWithValues: Set<UUID> {
         Set(values.keys.map(\.hostID))
@@ -1079,15 +1260,27 @@ private final class RunnerHostSecretStore: HostSecretStoring {
         values[Key(hostID: hostID, kind: kind)]
     }
 
+    func setCallCount(for kind: HostSecretKind) -> Int {
+        setCallCounts[kind, default: 0]
+    }
+
     func set(_ data: Data, for hostID: UUID, kind: HostSecretKind) throws {
         mutationCount += 1
+        setCallCounts[kind, default: 0] += 1
+        if failingSetCallNumbers[kind, default: []].contains(setCallCounts[kind, default: 0]) {
+            operationLog?.record("set-failed:\(kind.rawValue)")
+            throw RunnerHostStoreFailure.injected
+        }
         if failNextSetKinds.remove(kind) != nil {
+            operationLog?.record("set-failed:\(kind.rawValue)")
             throw RunnerHostStoreFailure.injected
         }
         guard !failingSetKinds.contains(kind) else {
+            operationLog?.record("set-failed:\(kind.rawValue)")
             throw RunnerHostStoreFailure.injected
         }
         values[Key(hostID: hostID, kind: kind)] = data
+        operationLog?.record("set:\(kind.rawValue)")
     }
 
     func data(for hostID: UUID, kind: HostSecretKind) throws -> Data? {
@@ -1097,11 +1290,14 @@ private final class RunnerHostSecretStore: HostSecretStoring {
     func delete(for hostID: UUID, kind: HostSecretKind) throws {
         mutationCount += 1
         if failNextDeleteKinds.remove(kind) != nil {
+            operationLog?.record("delete-failed:\(kind.rawValue)")
             throw RunnerHostStoreFailure.injected
         }
         guard !failingDeleteKinds.contains(kind) else {
+            operationLog?.record("delete-failed:\(kind.rawValue)")
             throw RunnerHostStoreFailure.injected
         }
         values.removeValue(forKey: Key(hostID: hostID, kind: kind))
+        operationLog?.record("delete:\(kind.rawValue)")
     }
 }
