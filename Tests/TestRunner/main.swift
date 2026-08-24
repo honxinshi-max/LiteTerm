@@ -7,6 +7,12 @@ struct LiteTermCoreTestRunner {
     static func main() async {
         var failures: [String] = []
 
+        if CommandLine.arguments.contains("--remote-output-sanitizer") {
+            checkRemoteOutputSanitization(&failures)
+            finish(failures, passingCheckCount: 1)
+            return
+        }
+
         checkHistoryDropsOldestLine(&failures)
         checkHistoryClear(&failures)
         checkZeroHistoryLimit(&failures)
@@ -29,12 +35,7 @@ struct LiteTermCoreTestRunner {
         await checkCoordinatedPathInspection(&failures)
         failures.append(contentsOf: await checkLocalOperationQueue())
 
-        guard failures.isEmpty else {
-            failures.forEach { print("FAIL: \($0)") }
-            exit(EXIT_FAILURE)
-        }
-
-        print("PASS: 21 LiteTermCore checks")
+        finish(failures, passingCheckCount: 21)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -302,6 +303,13 @@ struct LiteTermCoreTestRunner {
         let ordinary = Array("hello".utf8) + [0x1B, 0x5B, 0x41]
         expect(sanitizer.sanitize(ordinary) == ordinary, "remote sanitizer preserves ordinary terminal bytes", &failures)
 
+        var ordinaryRepeatedEscapeSanitizer = RemoteOutputSanitizer()
+        expect(
+            ordinaryRepeatedEscapeSanitizer.sanitize([0x1B, 0x1B, 0x5B, 0x41]) == [0x1B, 0x1B, 0x5B, 0x41],
+            "remote sanitizer preserves repeated ESC outside DCS",
+            &failures
+        )
+
         let sevenBit = [UInt8(0x61), 0x1B, 0x50] + Array("qpayload".utf8) + [0x1B, 0x5C, 0x62]
         expect(sanitizer.sanitize(sevenBit) == [0x61, 0x62], "remote sanitizer strips complete seven-bit DCS", &failures)
 
@@ -311,7 +319,46 @@ struct LiteTermCoreTestRunner {
         expect(sanitizer.sanitize([0x61, 0x1B]) == [0x61], "remote sanitizer holds a split escape introducer", &failures)
         expect(sanitizer.bufferedByteCount == 1, "remote sanitizer buffers at most the pending escape byte", &failures)
         expect(sanitizer.sanitize([0x50, 0x71, 0x1B]) == [], "remote sanitizer strips a split DCS body", &failures)
+        expect(sanitizer.bufferedByteCount == 1, "remote sanitizer records only the pending DCS-exit escape", &failures)
         expect(sanitizer.sanitize([0x5C, 0x62]) == [0x62], "remote sanitizer recognizes a split DCS terminator", &failures)
+
+        var canSanitizer = RemoteOutputSanitizer()
+        expect(canSanitizer.sanitize([0x61, 0x1B, 0x50, 0x71, 0x31]) == [0x61], "remote sanitizer enters seven-bit DCS before CAN", &failures)
+        expect(canSanitizer.sanitize([0x18, 0x62]) == [0x62], "CAN cancels a split seven-bit DCS", &failures)
+
+        var subSanitizer = RemoteOutputSanitizer()
+        expect(subSanitizer.sanitize([0x61, 0x90, 0x71, 0x31]) == [0x61], "remote sanitizer enters eight-bit DCS before SUB", &failures)
+        expect(subSanitizer.sanitize([0x1A, 0x62]) == [0x62], "SUB cancels a split eight-bit DCS", &failures)
+
+        var escapeExitSanitizer = RemoteOutputSanitizer()
+        expect(escapeExitSanitizer.sanitize([0x1B, 0x50, 0x71, 0x31, 0x1B]).isEmpty, "remote sanitizer holds a split DCS-exit escape", &failures)
+        expect(escapeExitSanitizer.bufferedByteCount == 1, "split DCS-exit escape retains one control byte", &failures)
+        expect(
+            escapeExitSanitizer.sanitize([0x5B, 0x33, 0x31, 0x6D, 0x4F, 0x4B]) == [0x1B, 0x5B, 0x33, 0x31, 0x6D, 0x4F, 0x4B],
+            "non-ST after DCS escape preserves the new escape sequence",
+            &failures
+        )
+
+        var repeatedEscapeSanitizer = RemoteOutputSanitizer()
+        _ = repeatedEscapeSanitizer.sanitize([0x1B, 0x50, 0x71, 0x31, 0x1B])
+        expect(repeatedEscapeSanitizer.sanitize([0x1B, 0x1B]).isEmpty, "repeated ESC exits DCS and retains only the newest split escape", &failures)
+        expect(repeatedEscapeSanitizer.bufferedByteCount == 1, "repeated ESC retains only the new escape introducer", &failures)
+        expect(repeatedEscapeSanitizer.sanitize([0x5B, 0x41]) == [0x1B, 0x5B, 0x41], "repeated ESC preserves the following CSI sequence", &failures)
+
+        var reentrySanitizer = RemoteOutputSanitizer()
+        _ = reentrySanitizer.sanitize([0x1B, 0x50, 0x71, 0x31, 0x1B])
+        expect(
+            reentrySanitizer.sanitize([0x50, 0x71, 0x32, 0x33, 0x1B, 0x5C, 0x62]) == [0x62],
+            "ESC P after DCS exit re-enters filtering without leaking payload",
+            &failures
+        )
+
+        var c1ReentrySanitizer = RemoteOutputSanitizer()
+        expect(
+            c1ReentrySanitizer.sanitize([0x1B, 0x90, 0x71, 0x32, 0x33, 0x9C, 0x62]) == [0x62],
+            "ESC followed by C1 DCS re-enters filtering without leaving terminal escape state",
+            &failures
+        )
 
         _ = sanitizer.sanitize([0x1B, 0x50])
         for _ in 0..<128 {
@@ -450,6 +497,15 @@ struct LiteTermCoreTestRunner {
         if !condition() {
             failures.append(message)
         }
+    }
+
+    private static func finish(_ failures: [String], passingCheckCount: Int) {
+        guard failures.isEmpty else {
+            failures.forEach { print("FAIL: \($0)") }
+            exit(EXIT_FAILURE)
+        }
+
+        print("PASS: \(passingCheckCount) LiteTermCore checks")
     }
 }
 
