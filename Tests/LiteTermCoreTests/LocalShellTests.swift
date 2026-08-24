@@ -60,6 +60,36 @@ final class LocalShellTests: XCTestCase {
         XCTAssertEqual(clear.outputLines, [])
     }
 
+    func testShellRejectsDirectoryEditing() async throws {
+        let root = try makeRoot()
+        try fileManager.createDirectory(at: root.appendingPathComponent("docs"), withIntermediateDirectories: false)
+        let shell = LocalShell(rootURL: root)
+
+        let edit = await shell.execute("edit docs")
+
+        XCTAssertNil(edit.editorURL)
+        XCTAssertEqual(edit.outputLines, ["Error: target is not a regular file"])
+    }
+
+    func testCatEmptyFileProducesNoOutputLines() async throws {
+        let root = try makeRoot()
+        let shell = LocalShell(rootURL: root)
+        _ = await shell.execute("touch empty.txt")
+
+        let content = await shell.execute("cat empty.txt")
+
+        XCTAssertEqual(content.outputLines, [])
+    }
+
+    func testShellUsesInjectedFileAccessBoundary() async throws {
+        let root = try makeRoot()
+        let shell = LocalShell(rootURL: root, fileSystem: FixtureFileSystem())
+
+        let listing = await shell.execute("ls")
+
+        XCTAssertEqual(listing.outputLines, ["coordinated-entry"])
+    }
+
     func testShellEnforcesExactFiveMiBReadAndEditCeiling() async throws {
         let root = try makeRoot()
         let shell = LocalShell(rootURL: root)
@@ -88,4 +118,15 @@ final class LocalShellTests: XCTestCase {
     private func canonical(_ url: URL) throws -> URL {
         try WorkspacePathResolver(rootURL: url, currentDirectoryURL: url).resolve("/")
     }
+}
+
+private struct FixtureFileSystem: LocalFileSystemAccess {
+    func list(at url: URL) throws -> [String] { ["coordinated-entry"] }
+    func readText(at url: URL) throws -> String { "" }
+    func prepareForEditing(at url: URL) throws {}
+    func createDirectory(at url: URL) throws {}
+    func touch(at url: URL) throws {}
+    func copyItem(from source: URL, to destination: URL) throws {}
+    func moveItem(from source: URL, to destination: URL) throws {}
+    func removeFile(at url: URL) throws {}
 }

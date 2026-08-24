@@ -9,19 +9,34 @@
 /* Begin PBXBuildFile section */
 		0327616B24775DF2D1361D3C /* ShellCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49D525A47BC6813063807CD8 /* ShellCommand.swift */; };
 		05CDEED92A07C332232621B6 /* ShellCommandParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BB038111532AACB404B7298 /* ShellCommandParser.swift */; };
+		0F6B58636DE0932610FE3406 /* TextFileEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E75C16E48BE3B810BF887C3 /* TextFileEditor.swift */; };
 		104BA56A53CCFB6FB835F688 /* TerminalHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AA2E5BF53176CB47F0C1964 /* TerminalHistory.swift */; };
+		116DAE8ACB6D032ADFF902FF /* ShortcutBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0681333BFED3FFB0592523 /* ShortcutBar.swift */; };
 		2AE2F998A7C21F75AC2CCBAD /* WorkspacePathResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E90C6527F9B4C77603876D8 /* WorkspacePathResolver.swift */; };
+		35C3CB5677E839BD349186EE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 460C3A4DB383E49E32EBDF79 /* Assets.xcassets */; };
+		44F3722804F76243BAC88D51 /* ShortcutInputReducerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 475F30C8ED90742F7F327B2A /* ShortcutInputReducerTests.swift */; };
+		471EF6D492DA5037E56E38BD /* CoordinatedFileAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A8E3F2072425B13F7312447 /* CoordinatedFileAccess.swift */; };
+		57AA765A08F410C7E01B3DAC /* FolderAuthorizationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 216910202CF806BC2C1AF987 /* FolderAuthorizationStore.swift */; };
 		5EFDC99385FA4BDC3006D0B3 /* ShellCommandParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB5536F4DBE9FF721AF9BC2F /* ShellCommandParserTests.swift */; };
+		60759589C496F333B2227B4C /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = A2682FB3D6A4CBD22AF71594 /* SwiftTerm */; };
 		62C2B0CBCED680D1AFD476E2 /* TerminalHistoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 452B537F25559C036D55F19B /* TerminalHistoryTests.swift */; };
+		6388721CC65C5BD5177487D7 /* FolderPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC24B8A081BFFAAE56E50955 /* FolderPicker.swift */; };
 		648350DC115E933137351836 /* ControlKeyEncoderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 884EF7D7DD778E21AB0A0335 /* ControlKeyEncoderTests.swift */; };
+		67FD023C5922FEDB737109FB /* TerminalViewRepresentable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C39FDBF55375CE193A41FA8 /* TerminalViewRepresentable.swift */; };
 		6F43CCF0EF3185A8E652C03A /* LiteTermCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 915C8CB2ED95014459B72635 /* LiteTermCore.framework */; };
+		7322853708CA3500221668C9 /* LiteTermSmokeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AB0BE0A699D3D1B041A5913 /* LiteTermSmokeUITests.swift */; };
 		7450A1BA64DB986459677D1A /* LocalShellTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E8BE604C8096B4560CB3A84 /* LocalShellTests.swift */; };
 		8A7914072EC3D9E800E4EFAF /* WorkspacePathResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB61486FD18544AE2E778DEB /* WorkspacePathResolverTests.swift */; };
 		8D2DC3029F79DF6365EFC3FA /* LocalFileSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 046694364C0593F3FA229B4A /* LocalFileSystem.swift */; };
+		94716829B4703BABBC717C20 /* LiteTermApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 874933828CAC7CE7338704C4 /* LiteTermApp.swift */; };
 		95882C649421F1DF03B1ED74 /* LiteTermCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 915C8CB2ED95014459B72635 /* LiteTermCore.framework */; };
+		9CD6F23AD33B209927B50340 /* TerminalScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE7B2EEA87791AC2C4CDDDE2 /* TerminalScreen.swift */; };
 		A2136F72581D56D5728EFDF6 /* ControlKeyEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DCA47FCC336DA1EC0CFA351 /* ControlKeyEncoder.swift */; };
+		A515F30A320DC5DE4BB37D30 /* ShortcutInputReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B693DF79C1DE7EDB4260CDB /* ShortcutInputReducer.swift */; };
+		A97CDF168D5747B049E82BAE /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88592AF12A8C26997D1AD63C /* AppModel.swift */; };
 		B2E92DCA8BC5759A95D7940B /* LocalShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FE0D2895A0864F00D0336F2 /* LocalShell.swift */; };
 		B9BD2CE48A270BF77CB54DF6 /* LiteTermCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 915C8CB2ED95014459B72635 /* LiteTermCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		CB0150F1EDB1225066E3A473 /* TerminalSessionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0539B4CDA1F14B9299DD4C30 /* TerminalSessionCoordinator.swift */; };
 		D2BBEAC5A01CAB89E82EC8FC /* LiteTermCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20E94BEF2728A50F0DC9F978 /* LiteTermCore.swift */; };
 		D4CC11904B259B8D06D93470 /* LiteTermCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 915C8CB2ED95014459B72635 /* LiteTermCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
@@ -77,22 +92,38 @@
 
 /* Begin PBXFileReference section */
 		046694364C0593F3FA229B4A /* LocalFileSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalFileSystem.swift; sourceTree = "<group>"; };
+		0539B4CDA1F14B9299DD4C30 /* TerminalSessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionCoordinator.swift; sourceTree = "<group>"; };
+		0A8E3F2072425B13F7312447 /* CoordinatedFileAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinatedFileAccess.swift; sourceTree = "<group>"; };
+		1C39FDBF55375CE193A41FA8 /* TerminalViewRepresentable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalViewRepresentable.swift; sourceTree = "<group>"; };
 		20E94BEF2728A50F0DC9F978 /* LiteTermCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiteTermCore.swift; sourceTree = "<group>"; };
+		216910202CF806BC2C1AF987 /* FolderAuthorizationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderAuthorizationStore.swift; sourceTree = "<group>"; };
 		452B537F25559C036D55F19B /* TerminalHistoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHistoryTests.swift; sourceTree = "<group>"; };
+		460C3A4DB383E49E32EBDF79 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		475F30C8ED90742F7F327B2A /* ShortcutInputReducerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutInputReducerTests.swift; sourceTree = "<group>"; };
 		49D525A47BC6813063807CD8 /* ShellCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellCommand.swift; sourceTree = "<group>"; };
+		4AB0BE0A699D3D1B041A5913 /* LiteTermSmokeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiteTermSmokeUITests.swift; sourceTree = "<group>"; };
 		5BB038111532AACB404B7298 /* ShellCommandParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellCommandParser.swift; sourceTree = "<group>"; };
 		5E90C6527F9B4C77603876D8 /* WorkspacePathResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacePathResolver.swift; sourceTree = "<group>"; };
 		6E8BE604C8096B4560CB3A84 /* LocalShellTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalShellTests.swift; sourceTree = "<group>"; };
+		7CFC3BAFB57ADD5996D6B2C5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		874933828CAC7CE7338704C4 /* LiteTermApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiteTermApp.swift; sourceTree = "<group>"; };
 		884EF7D7DD778E21AB0A0335 /* ControlKeyEncoderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlKeyEncoderTests.swift; sourceTree = "<group>"; };
+		88592AF12A8C26997D1AD63C /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		915C8CB2ED95014459B72635 /* LiteTermCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = LiteTermCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		96F44BE6C6AEF40D4A0D7D00 /* LiteTermCoreTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LiteTermCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9AA2E5BF53176CB47F0C1964 /* TerminalHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHistory.swift; sourceTree = "<group>"; };
+		9B693DF79C1DE7EDB4260CDB /* ShortcutInputReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutInputReducer.swift; sourceTree = "<group>"; };
 		9BF0787357DB945C6149B5A3 /* LiteTermUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LiteTermUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9DCA47FCC336DA1EC0CFA351 /* ControlKeyEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlKeyEncoder.swift; sourceTree = "<group>"; };
+		9E75C16E48BE3B810BF887C3 /* TextFileEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextFileEditor.swift; sourceTree = "<group>"; };
 		9FE0D2895A0864F00D0336F2 /* LocalShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalShell.swift; sourceTree = "<group>"; };
 		AB61486FD18544AE2E778DEB /* WorkspacePathResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacePathResolverTests.swift; sourceTree = "<group>"; };
+		B8D872263173334E11CDE724 /* LiteTerm.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LiteTerm.entitlements; sourceTree = "<group>"; };
 		CDF7B7A3F71AA5D2ED22028E /* LiteTerm.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LiteTerm.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		DC0681333BFED3FFB0592523 /* ShortcutBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutBar.swift; sourceTree = "<group>"; };
+		DE7B2EEA87791AC2C4CDDDE2 /* TerminalScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalScreen.swift; sourceTree = "<group>"; };
 		EB5536F4DBE9FF721AF9BC2F /* ShellCommandParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellCommandParserTests.swift; sourceTree = "<group>"; };
+		FC24B8A081BFFAAE56E50955 /* FolderPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderPicker.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -101,6 +132,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				95882C649421F1DF03B1ED74 /* LiteTermCore.framework in Frameworks */,
+				60759589C496F333B2227B4C /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -121,6 +153,7 @@
 				884EF7D7DD778E21AB0A0335 /* ControlKeyEncoderTests.swift */,
 				6E8BE604C8096B4560CB3A84 /* LocalShellTests.swift */,
 				EB5536F4DBE9FF721AF9BC2F /* ShellCommandParserTests.swift */,
+				475F30C8ED90742F7F327B2A /* ShortcutInputReducerTests.swift */,
 				452B537F25559C036D55F19B /* TerminalHistoryTests.swift */,
 				AB61486FD18544AE2E778DEB /* WorkspacePathResolverTests.swift */,
 			);
@@ -132,6 +165,7 @@
 			isa = PBXGroup;
 			children = (
 				9DCA47FCC336DA1EC0CFA351 /* ControlKeyEncoder.swift */,
+				9B693DF79C1DE7EDB4260CDB /* ShortcutInputReducer.swift */,
 				9AA2E5BF53176CB47F0C1964 /* TerminalHistory.swift */,
 			);
 			path = Terminal;
@@ -151,8 +185,21 @@
 		547DC5EB5248A01990D80B92 /* LiteTerm */ = {
 			isa = PBXGroup;
 			children = (
+				FDB84135D6B41523F9311478 /* App */,
+				CEB4DE4EBC4F3E78D10DAE3B /* Features */,
+				98CDADF3F373B04A6368A540 /* Resources */,
 			);
 			path = LiteTerm;
+			sourceTree = "<group>";
+		};
+		5936E7739CD588D3537A972C /* FileAccess */ = {
+			isa = PBXGroup;
+			children = (
+				0A8E3F2072425B13F7312447 /* CoordinatedFileAccess.swift */,
+				216910202CF806BC2C1AF987 /* FolderAuthorizationStore.swift */,
+				FC24B8A081BFFAAE56E50955 /* FolderPicker.swift */,
+			);
+			path = FileAccess;
 			sourceTree = "<group>";
 		};
 		5AC3E9F54A35B8F6D7E6681B /* LocalShell */ = {
@@ -178,6 +225,35 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		61B1007C05F4E95DB2CCA795 /* Terminal */ = {
+			isa = PBXGroup;
+			children = (
+				DC0681333BFED3FFB0592523 /* ShortcutBar.swift */,
+				DE7B2EEA87791AC2C4CDDDE2 /* TerminalScreen.swift */,
+				0539B4CDA1F14B9299DD4C30 /* TerminalSessionCoordinator.swift */,
+				1C39FDBF55375CE193A41FA8 /* TerminalViewRepresentable.swift */,
+			);
+			path = Terminal;
+			sourceTree = "<group>";
+		};
+		61D9A91D4559AEBABDB5D1C4 /* Editor */ = {
+			isa = PBXGroup;
+			children = (
+				9E75C16E48BE3B810BF887C3 /* TextFileEditor.swift */,
+			);
+			path = Editor;
+			sourceTree = "<group>";
+		};
+		98CDADF3F373B04A6368A540 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				460C3A4DB383E49E32EBDF79 /* Assets.xcassets */,
+				7CFC3BAFB57ADD5996D6B2C5 /* Info.plist */,
+				B8D872263173334E11CDE724 /* LiteTerm.entitlements */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		A751D148605C7CFBA81059F3 /* LiteTermCore */ = {
 			isa = PBXGroup;
 			children = (
@@ -192,8 +268,28 @@
 		B040637F8CDDFD01FE750C3A /* LiteTermUITests */ = {
 			isa = PBXGroup;
 			children = (
+				4AB0BE0A699D3D1B041A5913 /* LiteTermSmokeUITests.swift */,
 			);
 			path = LiteTermUITests;
+			sourceTree = "<group>";
+		};
+		CEB4DE4EBC4F3E78D10DAE3B /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				61D9A91D4559AEBABDB5D1C4 /* Editor */,
+				5936E7739CD588D3537A972C /* FileAccess */,
+				61B1007C05F4E95DB2CCA795 /* Terminal */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		FDB84135D6B41523F9311478 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				88592AF12A8C26997D1AD63C /* AppModel.swift */,
+				874933828CAC7CE7338704C4 /* LiteTermApp.swift */,
+			);
+			path = App;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -222,6 +318,7 @@
 			buildConfigurationList = B9B3259FD65F846AA55CAC2B /* Build configuration list for PBXNativeTarget "LiteTerm" */;
 			buildPhases = (
 				26293E25B0CC18BAB58A3D61 /* Sources */,
+				3B3E96CD553599C7DCE42E6B /* Resources */,
 				0988A2040A19A5E3737A1F85 /* Frameworks */,
 				3994AA1BAC0154E628A1E91E /* Embed Frameworks */,
 			);
@@ -232,6 +329,7 @@
 			);
 			name = LiteTerm;
 			packageProductDependencies = (
+				A2682FB3D6A4CBD22AF71594 /* SwiftTerm */,
 			);
 			productName = LiteTerm;
 			productReference = CDF7B7A3F71AA5D2ED22028E /* LiteTerm.app */;
@@ -297,6 +395,9 @@
 			);
 			mainGroup = 4AE02B1A515594D8BB9A2E6C;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				4361B62F728E6E88A2544EB2 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 5E4FDBD98F690CC99AC8EA08 /* Products */;
 			projectDirPath = "";
@@ -310,11 +411,32 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		3B3E96CD553599C7DCE42E6B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				35C3CB5677E839BD349186EE /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		26293E25B0CC18BAB58A3D61 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A97CDF168D5747B049E82BAE /* AppModel.swift in Sources */,
+				471EF6D492DA5037E56E38BD /* CoordinatedFileAccess.swift in Sources */,
+				57AA765A08F410C7E01B3DAC /* FolderAuthorizationStore.swift in Sources */,
+				6388721CC65C5BD5177487D7 /* FolderPicker.swift in Sources */,
+				94716829B4703BABBC717C20 /* LiteTermApp.swift in Sources */,
+				116DAE8ACB6D032ADFF902FF /* ShortcutBar.swift in Sources */,
+				9CD6F23AD33B209927B50340 /* TerminalScreen.swift in Sources */,
+				CB0150F1EDB1225066E3A473 /* TerminalSessionCoordinator.swift in Sources */,
+				67FD023C5922FEDB737109FB /* TerminalViewRepresentable.swift in Sources */,
+				0F6B58636DE0932610FE3406 /* TextFileEditor.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -325,6 +447,7 @@
 				648350DC115E933137351836 /* ControlKeyEncoderTests.swift in Sources */,
 				7450A1BA64DB986459677D1A /* LocalShellTests.swift in Sources */,
 				5EFDC99385FA4BDC3006D0B3 /* ShellCommandParserTests.swift in Sources */,
+				44F3722804F76243BAC88D51 /* ShortcutInputReducerTests.swift in Sources */,
 				62C2B0CBCED680D1AFD476E2 /* TerminalHistoryTests.swift in Sources */,
 				8A7914072EC3D9E800E4EFAF /* WorkspacePathResolverTests.swift in Sources */,
 			);
@@ -340,6 +463,7 @@
 				B2E92DCA8BC5759A95D7940B /* LocalShell.swift in Sources */,
 				0327616B24775DF2D1361D3C /* ShellCommand.swift in Sources */,
 				05CDEED92A07C332232621B6 /* ShellCommandParser.swift in Sources */,
+				A515F30A320DC5DE4BB37D30 /* ShortcutInputReducer.swift in Sources */,
 				104BA56A53CCFB6FB835F688 /* TerminalHistory.swift in Sources */,
 				2AE2F998A7C21F75AC2CCBAD /* WorkspacePathResolver.swift in Sources */,
 			);
@@ -349,6 +473,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7322853708CA3500221668C9 /* LiteTermSmokeUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -383,7 +508,7 @@
 					"@loader_path/Frameworks",
 				);
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 2;
 			};
 			name = Debug;
 		};
@@ -391,9 +516,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = LiteTerm/Resources/LiteTerm.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				GENERATE_INFOPLIST_FILE = YES;
-				"INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad" = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = LiteTerm/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -484,7 +610,7 @@
 				);
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 2;
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Debug;
@@ -499,7 +625,7 @@
 					"@loader_path/Frameworks",
 				);
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 2;
 			};
 			name = Release;
 		};
@@ -507,9 +633,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = LiteTerm/Resources/LiteTerm.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				GENERATE_INFOPLIST_FILE = YES;
-				"INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad" = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = LiteTerm/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -587,7 +714,7 @@
 					"@loader_path/Frameworks",
 				);
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 2;
 				TEST_TARGET_NAME = LiteTerm;
 			};
 			name = Release;
@@ -608,7 +735,7 @@
 				);
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 2;
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Release;
@@ -623,7 +750,7 @@
 					"@loader_path/Frameworks",
 				);
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 2;
 				TEST_TARGET_NAME = LiteTerm;
 			};
 			name = Debug;
@@ -677,6 +804,25 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		4361B62F728E6E88A2544EB2 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm.git";
+			requirement = {
+				kind = revision;
+				revision = dd2fb8ac5b861e7bf617c872895e338f38165648;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A2682FB3D6A4CBD22AF71594 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4361B62F728E6E88A2544EB2 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A78D3CAAEAB216C6AB488820 /* Project object */;
 }

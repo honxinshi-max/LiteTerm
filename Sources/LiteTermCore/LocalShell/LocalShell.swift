@@ -33,15 +33,19 @@ public struct ShellExecution: Equatable, Sendable {
 public actor LocalShell {
     private let rootURL: URL
     private let parser = ShellCommandParser()
-    private let fileSystem: LocalFileSystem
+    private let fileSystem: any LocalFileSystemAccess
     private var currentDirectoryURL: URL
     private var history: TerminalHistory
 
-    public init(rootURL: URL, historyLimit: Int = 2_000) {
+    public init(
+        rootURL: URL,
+        historyLimit: Int = 2_000,
+        fileSystem: (any LocalFileSystemAccess)? = nil
+    ) {
         let bootstrapResolver = WorkspacePathResolver(rootURL: rootURL, currentDirectoryURL: rootURL)
         let resolvedRoot = (try? bootstrapResolver.resolve("/")) ?? rootURL
         self.rootURL = resolvedRoot
-        self.fileSystem = LocalFileSystem(rootURL: resolvedRoot)
+        self.fileSystem = fileSystem ?? LocalFileSystem(rootURL: resolvedRoot)
         self.currentDirectoryURL = resolvedRoot
         self.history = TerminalHistory(limit: historyLimit)
     }
@@ -76,7 +80,7 @@ public actor LocalShell {
         case let .cat(path):
             let target = try resolver.resolve(path)
             let text = try fileSystem.readText(at: target)
-            return ShellExecution(outputLines: text.components(separatedBy: "\n"))
+            return ShellExecution(outputLines: text.isEmpty ? [] : text.components(separatedBy: "\n"))
         case let .mkdir(path):
             try fileSystem.createDirectory(at: resolver.resolve(path))
             return ShellExecution()
@@ -107,6 +111,8 @@ public actor LocalShell {
             return "Error: file exceeds the 5 MiB read/edit limit"
         case LocalFileSystemError.invalidText:
             return "Error: file is not valid UTF-8 text"
+        case LocalFileSystemError.notRegularFile:
+            return "Error: target is not a regular file"
         case LocalFileSystemError.workspaceRootRemoval:
             return "Error: workspace root cannot be removed"
         case LocalFileSystemError.directoryRemoval:

@@ -14,6 +14,7 @@ struct LiteTermCoreTestRunner {
         checkControlLettersAndBracket(&failures)
         checkControlUppercasing(&failures)
         checkUnsupportedControlCharacters(&failures)
+        checkShortcutInputReducer(&failures)
         checkQuotedShellPath(&failures)
         checkShellArityRejection(&failures)
         checkExactShellCommandSet(&failures)
@@ -21,13 +22,15 @@ struct LiteTermCoreTestRunner {
         checkWorkspaceVirtualPaths(&failures)
         await checkLocalShellFileOperations(&failures)
         await checkLocalShellEditorClearAndSizeLimit(&failures)
+        await checkLocalShellDirectoryEditAndEmptyCat(&failures)
+        await checkInjectedFileAccessBoundary(&failures)
 
         guard failures.isEmpty else {
             failures.forEach { print("FAIL: \($0)") }
             exit(EXIT_FAILURE)
         }
 
-        print("PASS: 14 LiteTermCore checks")
+        print("PASS: 17 LiteTermCore checks")
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -76,6 +79,32 @@ struct LiteTermCoreTestRunner {
     private static func checkUnsupportedControlCharacters(_ failures: inout [String]) {
         expect(ControlKeyEncoder.encode("`") == nil, "backtick is not a control combination", &failures)
         expect(ControlKeyEncoder.encode("é") == nil, "non-ASCII input is not a control combination", &failures)
+    }
+
+    private static func checkShortcutInputReducer(_ failures: inout [String]) {
+        var reducer = ShortcutInputReducer()
+        expect(reducer.handleShortcut(.control) == [], "Ctrl latches without emitting bytes", &failures)
+        expect(reducer.isControlLatched, "Ctrl reports its latched state", &failures)
+        expect(reducer.reduceText("c") == [0x03], "latched Ctrl-C emits 0x03", &failures)
+        expect(!reducer.isControlLatched, "Ctrl clears after one printable ASCII character", &failures)
+        expect(reducer.reduceText("c") == [0x63], "cleared Ctrl does not affect the next character", &failures)
+
+        let expected: [(TerminalShortcutKey, [UInt8])] = [
+            (.escape, [0x1B]),
+            (.tab, [0x09]),
+            (.up, [0x1B, 0x5B, 0x41]),
+            (.down, [0x1B, 0x5B, 0x42]),
+            (.right, [0x1B, 0x5B, 0x43]),
+            (.left, [0x1B, 0x5B, 0x44]),
+            (.slash, [0x2F])
+        ]
+        for (key, bytes) in expected {
+            expect(reducer.handleShortcut(key) == bytes, "\(key) emits its terminal byte sequence", &failures)
+        }
+
+        _ = reducer.handleShortcut(.control)
+        expect(reducer.reduceText("1") == [0x31], "unsupported printable Ctrl input passes through", &failures)
+        expect(!reducer.isControlLatched, "unsupported printable Ctrl input still clears the latch", &failures)
     }
 
     private static func checkQuotedShellPath(_ failures: inout [String]) {
@@ -231,6 +260,39 @@ struct LiteTermCoreTestRunner {
         }
     }
 
+    private static func checkLocalShellDirectoryEditAndEmptyCat(_ failures: inout [String]) async {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent("LiteTerm-Runner-edit-empty-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+            try fileManager.createDirectory(at: root.appendingPathComponent("docs"), withIntermediateDirectories: false)
+            guard fileManager.createFile(atPath: root.appendingPathComponent("empty.txt").path, contents: Data()) else {
+                failures.append("local shell empty-file fixture can be created")
+                return
+            }
+            let shell = LocalShell(rootURL: root)
+
+            let directoryEdit = await shell.execute("edit docs")
+            let emptyRead = await shell.execute("cat empty.txt")
+
+            expect(directoryEdit.editorURL == nil, "local shell does not open a directory in the editor", &failures)
+            expect(directoryEdit.outputLines == ["Error: target is not a regular file"], "local shell explains directory edit rejection", &failures)
+            expect(emptyRead.outputLines.isEmpty, "cat of an empty file emits no output lines", &failures)
+        } catch {
+            failures.append("local shell directory-edit runner fixture can be created: \(error)")
+        }
+    }
+
+    private static func checkInjectedFileAccessBoundary(_ failures: inout [String]) async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-injected-file-access-\(UUID().uuidString)", isDirectory: true)
+        let shell = LocalShell(rootURL: root, fileSystem: RunnerFileSystem())
+
+        let listing = await shell.execute("ls")
+
+        expect(listing.outputLines == ["coordinated-entry"], "local shell uses its injected file access boundary", &failures)
+    }
+
     private static func expect(
         _ condition: @autoclosure () -> Bool,
         _ message: String,
@@ -240,4 +302,15 @@ struct LiteTermCoreTestRunner {
             failures.append(message)
         }
     }
+}
+
+private struct RunnerFileSystem: LocalFileSystemAccess {
+    func list(at url: URL) throws -> [String] { ["coordinated-entry"] }
+    func readText(at url: URL) throws -> String { "" }
+    func prepareForEditing(at url: URL) throws {}
+    func createDirectory(at url: URL) throws {}
+    func touch(at url: URL) throws {}
+    func copyItem(from source: URL, to destination: URL) throws {}
+    func moveItem(from source: URL, to destination: URL) throws {}
+    func removeFile(at url: URL) throws {}
 }

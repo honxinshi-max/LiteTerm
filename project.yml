@@ -9,12 +9,20 @@ settings:
     SWIFT_VERSION: "6.0"
     TARGETED_DEVICE_FAMILY: "2"
 
+packages:
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm.git
+    revision: dd2fb8ac5b861e7bf617c872895e338f38165648
+
 targets:
   LiteTermCore:
     type: framework
     platform: iOS
     sources:
       - Sources/LiteTermCore
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "2"
 
   LiteTerm:
     type: application
@@ -23,12 +31,15 @@ targets:
       - LiteTerm
     dependencies:
       - target: LiteTermCore
+      - package: SwiftTerm
+        product: SwiftTerm
     settings:
       base:
+        CODE_SIGN_ENTITLEMENTS: LiteTerm/Resources/LiteTerm.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: LiteTerm/Resources/Info.plist
         PRODUCT_BUNDLE_IDENTIFIER: com.liteterm.app
-        GENERATE_INFOPLIST_FILE: YES
         TARGETED_DEVICE_FAMILY: "2"
-        "INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad": "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
 
   LiteTermCoreTests:
     type: bundle.unit-test
@@ -37,6 +48,9 @@ targets:
       - Tests/LiteTermCoreTests
     dependencies:
       - target: LiteTermCore
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "2"
 
   LiteTermUITests:
     type: bundle.ui-testing
@@ -45,3 +59,6 @@ targets:
       - LiteTermUITests
     dependencies:
       - target: LiteTerm
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "2"

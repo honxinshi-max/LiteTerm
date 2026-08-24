@@ -1,13 +1,25 @@
 import Foundation
 
+public protocol LocalFileSystemAccess: Sendable {
+    func list(at url: URL) throws -> [String]
+    func readText(at url: URL) throws -> String
+    func prepareForEditing(at url: URL) throws
+    func createDirectory(at url: URL) throws
+    func touch(at url: URL) throws
+    func copyItem(from source: URL, to destination: URL) throws
+    func moveItem(from source: URL, to destination: URL) throws
+    func removeFile(at url: URL) throws
+}
+
 public enum LocalFileSystemError: Error, Equatable, Sendable {
     case fileTooLarge
     case invalidText
+    case notRegularFile
     case workspaceRootRemoval
     case directoryRemoval
 }
 
-public struct LocalFileSystem: Sendable {
+public struct LocalFileSystem: LocalFileSystemAccess {
     public static let maximumTextFileBytes = 5 * 1024 * 1024
 
     private let rootURL: URL
@@ -38,6 +50,13 @@ public struct LocalFileSystem: Sendable {
     }
 
     public func prepareForEditing(at url: URL) throws {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        guard !isDirectory.boolValue else {
+            throw LocalFileSystemError.notRegularFile
+        }
         try validateTextSize(at: url)
     }
 

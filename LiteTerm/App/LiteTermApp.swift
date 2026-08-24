@@ -1,0 +1,25 @@
+import SwiftUI
+
+@main
+struct LiteTermApp: App {
+    @StateObject private var model = AppModel()
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some Scene {
+        WindowGroup {
+            TerminalScreen(model: model)
+                .onChange(of: scenePhase) { _, newPhase in
+                    switch newPhase {
+                    case .active:
+                        model.didBecomeActive()
+                    case .background:
+                        model.didEnterBackground()
+                    case .inactive:
+                        break
+                    @unknown default:
+                        break
+                    }
+                }
+        }
+    }
+}
