@@ -424,6 +424,19 @@ struct LiteTermCoreTestRunner {
         }
         expect(mismatchFileSystem.revalidationCallCount == 1, "local shell delegates confirmation to one revalidation/removal boundary", &failures)
         expect(!mismatchFileSystem.didDelete, "identity mismatch boundary performs no deletion", &failures)
+
+        let raceFileSystem = RunnerRequestPreparationRaceFileSystem()
+        let raceShell = LocalShell(rootURL: root, fileSystem: raceFileSystem)
+        let raceResult = await raceShell.execute("rm target.txt")
+        expect(raceResult.deletionConfirmationRequest == nil, "request preparation rejects a target replaced by a symlink", &failures)
+        expect(raceResult.outputLines == ["Error: deletion request expired"], "request-time replacement expires without displaying a bound target", &failures)
+        expect(raceFileSystem.prepareCallCount == 1, "local shell uses exactly one request preparation boundary", &failures)
+
+        let mismatchedPreparedFileSystem = RunnerMismatchedPreparedDeletionFileSystem()
+        let mismatchedPreparedShell = LocalShell(rootURL: root, fileSystem: mismatchedPreparedFileSystem)
+        let mismatchedPreparedResult = await mismatchedPreparedShell.execute("rm target.txt")
+        expect(mismatchedPreparedResult.deletionConfirmationRequest == nil, "local shell rejects mismatched prepared display and logical paths", &failures)
+        expect(mismatchedPreparedResult.outputLines == ["Error: deletion request expired"], "mismatched prepared deletion fails closed", &failures)
     }
 
     private static func checkRemoteOutputSanitization(_ failures: inout [String]) {
@@ -716,6 +729,29 @@ struct LiteTermCoreTestRunner {
         await boundedQueue.suspendAndDrain()
         let boundedResumedValues = await boundedRecorder.values()
         expect(boundedResumedValues.last == "resumed", "bounded queue completes resumed work", &failures)
+
+        let scheduler = WorkspaceTransitionScheduler()
+        let transitionGate = RunnerDelayedOperationGate()
+        let transitionRecorder = RunnerOperationRecorder()
+        scheduler.submitNormal {
+            await transitionRecorder.append("normal-running")
+            await transitionGate.wait()
+        }
+        await transitionGate.waitUntilStarted()
+        for index in 0..<100 {
+            scheduler.submitNormal { await transitionRecorder.append("normal-\(index)") }
+        }
+        for _ in 0..<100 {
+            scheduler.submitSafety { await transitionRecorder.append("safety") }
+        }
+        scheduler.submitNormal { await transitionRecorder.append("normal-latest") }
+        expect(scheduler.retainedTransitionCount == 3, "workspace scheduler retains one running, one safety, and one latest normal transition", &failures)
+        expect(scheduler.hasPendingSafety && scheduler.hasPendingNormal, "workspace scheduler preserves safety and latest normal intents under saturation", &failures)
+        await transitionGate.release()
+        await scheduler.drain()
+        let transitionValues = await transitionRecorder.values()
+        expect(transitionValues == ["normal-running", "safety", "normal-latest"], "workspace scheduler executes safety before the latest coalesced normal transition", &failures)
+        expect(scheduler.retainedTransitionCount == 0, "workspace scheduler releases all retained transitions after drain", &failures)
         return failures
     }
 
@@ -1491,6 +1527,9 @@ private struct RunnerFileSystem: LocalFileSystemAccess {
     func touch(at url: URL) throws {}
     func copyItem(from source: URL, to destination: URL) throws {}
     func moveItem(from source: URL, to destination: URL) throws {}
+    func prepareDeletion(rootURL: URL, currentDirectoryURL: URL, userPath: String) throws -> PreparedDeletion {
+        throw LocalFileSystemError.deletionRequestExpired
+    }
     func deletionIdentity(at url: URL) throws -> LocalFileIdentity { throw LocalFileSystemError.fileIdentityUnavailable }
     func revalidateAndRemoveFile(rootURL: URL, rootRelativePath: String, expectedIdentity: LocalFileIdentity) throws {
         throw LocalFileSystemError.deletionRequestExpired
@@ -1513,6 +1552,9 @@ private struct RunnerInspectingFileSystem: LocalFileSystemAccess {
     func touch(at url: URL) throws {}
     func copyItem(from source: URL, to destination: URL) throws {}
     func moveItem(from source: URL, to destination: URL) throws {}
+    func prepareDeletion(rootURL: URL, currentDirectoryURL: URL, userPath: String) throws -> PreparedDeletion {
+        throw LocalFileSystemError.deletionRequestExpired
+    }
     func deletionIdentity(at url: URL) throws -> LocalFileIdentity { throw LocalFileSystemError.fileIdentityUnavailable }
     func revalidateAndRemoveFile(rootURL: URL, rootRelativePath: String, expectedIdentity: LocalFileIdentity) throws {
         throw LocalFileSystemError.deletionRequestExpired
@@ -1532,6 +1574,13 @@ private final class RunnerIdentityMismatchFileSystem: LocalFileSystemAccess, @un
     func touch(at url: URL) throws {}
     func copyItem(from source: URL, to destination: URL) throws {}
     func moveItem(from source: URL, to destination: URL) throws {}
+    func prepareDeletion(rootURL: URL, currentDirectoryURL: URL, userPath: String) throws -> PreparedDeletion {
+        PreparedDeletion(
+            targetURL: rootURL.appendingPathComponent(userPath),
+            rootRelativePath: userPath,
+            fileIdentity: LocalFileIdentity(resourceIdentifier: Data([0x01]))
+        )
+    }
     func deletionIdentity(at url: URL) throws -> LocalFileIdentity {
         LocalFileIdentity(resourceIdentifier: Data([0x01]))
     }
@@ -1539,6 +1588,65 @@ private final class RunnerIdentityMismatchFileSystem: LocalFileSystemAccess, @un
         revalidationCallCount += 1
         throw LocalFileSystemError.deletionRequestExpired
     }
+}
+
+private final class RunnerRequestPreparationRaceFileSystem: LocalFileSystemAccess, @unchecked Sendable {
+    private var replacementIsSymlink = false
+    private(set) var prepareCallCount = 0
+
+    func symbolicLinkDestination(at url: URL) throws -> String? {
+        guard url.lastPathComponent == "target.txt" else { return nil }
+        return replacementIsSymlink ? "replacement.txt" : nil
+    }
+    func isDirectory(at url: URL) throws -> Bool { false }
+    func list(at url: URL) throws -> [String] { [] }
+    func readText(at url: URL) throws -> String { "" }
+    func prepareForEditing(at url: URL) throws {}
+    func createDirectory(at url: URL) throws {}
+    func touch(at url: URL) throws {}
+    func copyItem(from source: URL, to destination: URL) throws {}
+    func moveItem(from source: URL, to destination: URL) throws {}
+    func prepareDeletion(rootURL: URL, currentDirectoryURL: URL, userPath: String) throws -> PreparedDeletion {
+        prepareCallCount += 1
+        let resolver = WorkspacePathResolver(rootURL: rootURL, currentDirectoryURL: currentDirectoryURL, pathInspector: self)
+        _ = try resolver.resolveWithoutSymbolicLinks(userPath)
+        replacementIsSymlink = true
+        do {
+            _ = try resolver.resolveWithoutSymbolicLinks(userPath)
+        } catch {
+            throw LocalFileSystemError.deletionRequestExpired
+        }
+        throw LocalFileSystemError.deletionRequestExpired
+    }
+    func deletionIdentity(at url: URL) throws -> LocalFileIdentity {
+        LocalFileIdentity(resourceIdentifier: Data([0x02]))
+    }
+    func revalidateAndRemoveFile(rootURL: URL, rootRelativePath: String, expectedIdentity: LocalFileIdentity) throws {
+        throw LocalFileSystemError.deletionRequestExpired
+    }
+}
+
+private final class RunnerMismatchedPreparedDeletionFileSystem: LocalFileSystemAccess, @unchecked Sendable {
+    func symbolicLinkDestination(at url: URL) throws -> String? { nil }
+    func isDirectory(at url: URL) throws -> Bool { false }
+    func list(at url: URL) throws -> [String] { [] }
+    func readText(at url: URL) throws -> String { "" }
+    func prepareForEditing(at url: URL) throws {}
+    func createDirectory(at url: URL) throws {}
+    func touch(at url: URL) throws {}
+    func copyItem(from source: URL, to destination: URL) throws {}
+    func moveItem(from source: URL, to destination: URL) throws {}
+    func prepareDeletion(rootURL: URL, currentDirectoryURL: URL, userPath: String) throws -> PreparedDeletion {
+        PreparedDeletion(
+            targetURL: rootURL.appendingPathComponent("target.txt"),
+            rootRelativePath: "replacement.txt",
+            fileIdentity: LocalFileIdentity(resourceIdentifier: Data([0x03]))
+        )
+    }
+    func deletionIdentity(at url: URL) throws -> LocalFileIdentity {
+        LocalFileIdentity(resourceIdentifier: Data([0x03]))
+    }
+    func revalidateAndRemoveFile(rootURL: URL, rootRelativePath: String, expectedIdentity: LocalFileIdentity) throws {}
 }
 
 private actor RunnerDelayedOperationGate {

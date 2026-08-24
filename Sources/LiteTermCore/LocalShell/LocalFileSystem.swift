@@ -13,12 +13,33 @@ public protocol LocalFileSystemAccess: WorkspacePathInspecting {
     func touch(at url: URL) throws
     func copyItem(from source: URL, to destination: URL) throws
     func moveItem(from source: URL, to destination: URL) throws
+    func prepareDeletion(
+        rootURL: URL,
+        currentDirectoryURL: URL,
+        userPath: String
+    ) throws -> PreparedDeletion
     func deletionIdentity(at url: URL) throws -> LocalFileIdentity
     func revalidateAndRemoveFile(
         rootURL: URL,
         rootRelativePath: String,
         expectedIdentity: LocalFileIdentity
     ) throws
+}
+
+public struct PreparedDeletion: Equatable, Sendable {
+    public let targetURL: URL
+    public let rootRelativePath: String
+    public let fileIdentity: LocalFileIdentity
+
+    public init(
+        targetURL: URL,
+        rootRelativePath: String,
+        fileIdentity: LocalFileIdentity
+    ) {
+        self.targetURL = targetURL
+        self.rootRelativePath = rootRelativePath
+        self.fileIdentity = fileIdentity
+    }
 }
 
 public struct LocalFileIdentity: Equatable, Sendable {
@@ -125,6 +146,52 @@ public struct LocalFileSystem: LocalFileSystemAccess {
 
     public func moveItem(from source: URL, to destination: URL) throws {
         try FileManager.default.moveItem(at: source, to: destination)
+    }
+
+    public func prepareDeletion(
+        rootURL: URL,
+        currentDirectoryURL: URL,
+        userPath: String
+    ) throws -> PreparedDeletion {
+        let resolver = WorkspacePathResolver(
+            rootURL: rootURL,
+            currentDirectoryURL: currentDirectoryURL,
+            pathInspector: self
+        )
+        let target = try resolver.resolveWithoutSymbolicLinks(userPath)
+        guard target.path != resolver.rootURL.path else {
+            throw LocalFileSystemError.workspaceRootRemoval
+        }
+        guard try !isDirectory(at: target) else {
+            throw LocalFileSystemError.directoryRemoval
+        }
+
+        let relativeComponents = target.pathComponents.dropFirst(resolver.rootURL.pathComponents.count)
+        guard !relativeComponents.isEmpty else {
+            throw LocalFileSystemError.workspaceRootRemoval
+        }
+        let rootRelativePath = relativeComponents.joined(separator: "/")
+        let identity = try deletionIdentity(at: target)
+
+        // Repeat the no-follow resolution and identity read within this preparation
+        // boundary. Any observable replacement or redirection fails closed.
+        let revalidatedTarget: URL
+        let revalidatedIdentity: LocalFileIdentity
+        do {
+            revalidatedTarget = try resolver.resolveWithoutSymbolicLinks(userPath)
+            revalidatedIdentity = try deletionIdentity(at: revalidatedTarget)
+        } catch {
+            throw LocalFileSystemError.deletionRequestExpired
+        }
+        guard revalidatedTarget == target, revalidatedIdentity == identity else {
+            throw LocalFileSystemError.deletionRequestExpired
+        }
+
+        return PreparedDeletion(
+            targetURL: target,
+            rootRelativePath: rootRelativePath,
+            fileIdentity: identity
+        )
     }
 
     public func deletionIdentity(at url: URL) throws -> LocalFileIdentity {

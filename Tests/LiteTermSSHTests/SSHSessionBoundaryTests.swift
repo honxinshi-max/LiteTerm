@@ -148,6 +148,52 @@ final class SSHSessionBoundaryTests: XCTestCase {
         XCTAssertNotNil(model.authorizationErrorMessage)
     }
 
+    func testAppModelRoutesBackgroundSafetyBeforeLatestCoalescedFolderIntent() async throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Workspace-Scheduler-\(UUID().uuidString)", isDirectory: true)
+        let documents = base.appendingPathComponent("Documents", isDirectory: true)
+        let previous = base.appendingPathComponent("Previous", isDirectory: true)
+        let superseded = base.appendingPathComponent("Superseded", isDirectory: true)
+        let latest = base.appendingPathComponent("Latest", isDirectory: true)
+        for url in [documents, previous, superseded, latest] {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        let access = BoundaryFolderAccess()
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "LiteTerm.Scheduler.\(UUID().uuidString)"))
+        let store = FolderAuthorizationStore(
+            documentsURL: documents,
+            defaults: defaults,
+            resourceAccess: access.dependencies
+        )
+        let scheduler = WorkspaceTransitionScheduler()
+        let gate = BoundaryOperationGate()
+        let model = AppModel(
+            folderAuthorizationStore: store,
+            secrets: KeychainStore(service: "com.liteterm.tests.scheduler.\(UUID().uuidString)"),
+            workspaceTransitionScheduler: scheduler
+        )
+        await model.selectExternalFolder(previous)
+
+        scheduler.submitNormal { await gate.wait() }
+        await gate.waitUntilStarted()
+        for _ in 0..<100 {
+            model.completeFolderSelection(superseded)
+        }
+        model.didEnterBackground()
+        model.completeFolderSelection(latest)
+
+        XCTAssertEqual(scheduler.retainedTransitionCount, 3)
+        await gate.release()
+        await scheduler.drain()
+
+        XCTAssertEqual(access.stopCounts[previous], 1)
+        XCTAssertNil(access.startCounts[superseded])
+        XCTAssertEqual(access.startCounts[latest], 1)
+        XCTAssertEqual(store.activeRootURL, latest)
+        XCTAssertEqual(model.terminalSession.activeWorkspaceID, latest.path)
+        XCTAssertEqual(scheduler.retainedTransitionCount, 0)
+    }
+
     func testCoordinatorPassesCommandCostAndRejectsBeyondTheBlockedQueueBudget() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("LiteTerm-Queue-Boundary-\(UUID().uuidString)", isDirectory: true)

@@ -29,7 +29,7 @@ final class AppModel: ObservableObject {
     let hostStore: HostStore
     let terminalSession: TerminalSessionCoordinator
     let sshSession: SSHSessionController
-    private let workspaceTransitionQueue = LocalOperationQueue()
+    private let workspaceTransitionScheduler: WorkspaceTransitionScheduler
 
     var onHostsRequested: (() -> Void)?
     var canRequestHosts: Bool { onHostsRequested != nil }
@@ -44,10 +44,12 @@ final class AppModel: ObservableObject {
     init(
         folderAuthorizationStore authorizationStore: FolderAuthorizationStore,
         secrets: any HostSecretStoring,
-        sshClientFactory: @escaping SSHSessionController.ClientFactory = { SSHClient(configuration: $0) }
+        sshClientFactory: @escaping SSHSessionController.ClientFactory = { SSHClient(configuration: $0) },
+        workspaceTransitionScheduler: WorkspaceTransitionScheduler = WorkspaceTransitionScheduler()
     ) {
         folderAuthorizationStore = authorizationStore
         hostStore = HostStore(secrets: secrets)
+        self.workspaceTransitionScheduler = workspaceTransitionScheduler
 
         var initialRoot = authorizationStore.documentsURL
         var initialError: String?
@@ -104,13 +106,13 @@ final class AppModel: ObservableObject {
 
     func completeFolderSelection(_ url: URL) {
         isShowingFolderPicker = false
-        workspaceTransitionQueue.enqueue { [weak self] in
+        workspaceTransitionScheduler.submitNormal { [weak self] in
             await self?.selectExternalFolder(url)
         }
     }
 
     func useAppDocuments() {
-        workspaceTransitionQueue.enqueue { [weak self] in
+        workspaceTransitionScheduler.submitNormal { [weak self] in
             await self?.switchToAppDocuments(clearBookmark: true)
         }
     }
@@ -134,14 +136,14 @@ final class AppModel: ObservableObject {
 
     func didBecomeActive() {
         sshSession.scenePhaseChanged(.active)
-        workspaceTransitionQueue.enqueue { [weak self] in
+        workspaceTransitionScheduler.submitNormal { [weak self] in
             await self?.restoreWorkspaceAfterActivation()
         }
     }
 
     func didEnterBackground() {
         sshSession.scenePhaseChanged(.background)
-        workspaceTransitionQueue.enqueue { [weak self] in
+        workspaceTransitionScheduler.submitSafety { [weak self] in
             await self?.switchToAppDocuments(clearBookmark: false)
         }
     }

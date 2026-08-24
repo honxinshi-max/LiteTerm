@@ -81,6 +81,9 @@ private final class InspectingFileSystem: LocalFileSystemAccess, @unchecked Send
     func touch(at url: URL) throws {}
     func copyItem(from source: URL, to destination: URL) throws {}
     func moveItem(from source: URL, to destination: URL) throws {}
+    func prepareDeletion(rootURL: URL, currentDirectoryURL: URL, userPath: String) throws -> PreparedDeletion {
+        throw LocalFileSystemError.deletionRequestExpired
+    }
     func deletionIdentity(at url: URL) throws -> LocalFileIdentity {
         throw LocalFileSystemError.fileIdentityUnavailable
     }

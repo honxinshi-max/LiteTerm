@@ -137,21 +137,16 @@ public actor LocalShell {
             try fileSystem.moveItem(from: resolver.resolve(source), to: resolver.resolve(destination))
             return ShellExecution()
         case let .remove(path):
-            let target = try resolver.resolve(path)
-            guard target.path != rootURL.path else {
-                throw LocalFileSystemError.workspaceRootRemoval
-            }
-            guard try !fileSystem.isDirectory(at: target) else {
-                throw LocalFileSystemError.directoryRemoval
-            }
-            let rootRelativePath = try resolver.rootRelativePath(for: target)
-            guard !rootRelativePath.isEmpty else {
-                throw LocalFileSystemError.workspaceRootRemoval
-            }
+            let prepared = try fileSystem.prepareDeletion(
+                rootURL: rootURL,
+                currentDirectoryURL: currentDirectoryURL,
+                userPath: path
+            )
+            try validate(preparedDeletion: prepared)
             let request = DeletionConfirmationRequest(
-                targetURL: target,
-                rootRelativePath: rootRelativePath,
-                fileIdentity: try fileSystem.deletionIdentity(at: target)
+                targetURL: prepared.targetURL,
+                rootRelativePath: prepared.rootRelativePath,
+                fileIdentity: prepared.fileIdentity
             )
             pendingDeletionRequest = request
             return ShellExecution(deletionConfirmationRequest: request)
@@ -161,6 +156,29 @@ public actor LocalShell {
             let target = try resolver.resolve(path)
             try fileSystem.prepareForEditing(at: target)
             return ShellExecution(editorURL: target)
+        }
+    }
+
+    private func validate(preparedDeletion: PreparedDeletion) throws {
+        let relativeComponents = preparedDeletion.rootRelativePath
+            .split(separator: "/", omittingEmptySubsequences: false)
+            .map(String.init)
+        guard
+            preparedDeletion.targetURL.isFileURL,
+            preparedDeletion.fileIdentity.isUsable,
+            !preparedDeletion.rootRelativePath.hasPrefix("/"),
+            !relativeComponents.isEmpty,
+            relativeComponents.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." })
+        else {
+            throw LocalFileSystemError.deletionRequestExpired
+        }
+
+        let expectedTarget = relativeComponents.reduce(rootURL) { partialURL, component in
+            partialURL.appendingPathComponent(component)
+        }
+        guard expectedTarget.path == preparedDeletion.targetURL.path,
+              expectedTarget.path != rootURL.path else {
+            throw LocalFileSystemError.deletionRequestExpired
         }
     }
 

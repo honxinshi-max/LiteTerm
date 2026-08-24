@@ -3,6 +3,44 @@ import XCTest
 
 final class LocalOperationQueueTests: XCTestCase {
     @MainActor
+    func testWorkspaceSchedulerCoalescesSaturatedNormalIntentsAroundSafetyTransition() async {
+        let scheduler = WorkspaceTransitionScheduler()
+        let gate = DelayedOperationGate()
+        let recorder = OperationRecorder()
+
+        scheduler.submitNormal {
+            await recorder.append("normal-running")
+            await gate.wait()
+        }
+        await gate.waitUntilStarted()
+
+        for index in 0..<100 {
+            scheduler.submitNormal {
+                await recorder.append("normal-\(index)")
+            }
+        }
+        for _ in 0..<100 {
+            scheduler.submitSafety {
+                await recorder.append("safety")
+            }
+        }
+        scheduler.submitNormal {
+            await recorder.append("normal-latest")
+        }
+
+        XCTAssertEqual(scheduler.retainedTransitionCount, 3)
+        XCTAssertEqual(scheduler.hasPendingSafety, true)
+        XCTAssertEqual(scheduler.hasPendingNormal, true)
+
+        await gate.release()
+        await scheduler.drain()
+
+        let values = await recorder.values()
+        XCTAssertEqual(values, ["normal-running", "safety", "normal-latest"])
+        XCTAssertEqual(scheduler.retainedTransitionCount, 0)
+    }
+
+    @MainActor
     func testTransitionSuspendsInputAndDrainsOldOperationsBeforeScopeStop() async {
         let queue = LocalOperationQueue()
         let gate = DelayedOperationGate()

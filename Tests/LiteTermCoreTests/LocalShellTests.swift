@@ -164,6 +164,30 @@ final class LocalShellTests: XCTestCase {
         XCTAssertEqual(fileSystem.didDelete, false)
     }
 
+    func testDeletionRequestExpiresWhenPreparationSeesTargetReplacedBySymlink() async throws {
+        let root = try makeRoot()
+        let fileSystem = RequestPreparationRaceFileSystem(rootURL: root)
+        let shell = LocalShell(rootURL: root, fileSystem: fileSystem)
+
+        let result = await shell.execute("rm target.txt")
+
+        XCTAssertNil(result.deletionConfirmationRequest)
+        XCTAssertEqual(result.outputLines, ["Error: deletion request expired"])
+        XCTAssertEqual(fileSystem.prepareCallCount, 1)
+    }
+
+    func testShellRejectsInternallyMismatchedPreparedDeletion() async throws {
+        let root = try makeRoot()
+        let fileSystem = MismatchedPreparedDeletionFileSystem(rootURL: root)
+        let shell = LocalShell(rootURL: root, fileSystem: fileSystem)
+
+        let result = await shell.execute("rm target.txt")
+
+        XCTAssertNil(result.deletionConfirmationRequest)
+        XCTAssertEqual(result.outputLines, ["Error: deletion request expired"])
+        XCTAssertEqual(fileSystem.prepareCallCount, 1)
+    }
+
     func testShellRejectsRootAndDirectoryRemoval() async throws {
         let root = try makeRoot()
         try fileManager.createDirectory(at: root.appendingPathComponent("docs"), withIntermediateDirectories: true)
@@ -262,6 +286,9 @@ private struct FixtureFileSystem: LocalFileSystemAccess {
     func touch(at url: URL) throws {}
     func copyItem(from source: URL, to destination: URL) throws {}
     func moveItem(from source: URL, to destination: URL) throws {}
+    func prepareDeletion(rootURL: URL, currentDirectoryURL: URL, userPath: String) throws -> PreparedDeletion {
+        throw LocalFileSystemError.deletionRequestExpired
+    }
     func deletionIdentity(at url: URL) throws -> LocalFileIdentity {
         throw LocalFileSystemError.fileIdentityUnavailable
     }
@@ -287,6 +314,13 @@ private final class IdentityMismatchFileSystem: LocalFileSystemAccess, @unchecke
     func touch(at url: URL) throws {}
     func copyItem(from source: URL, to destination: URL) throws {}
     func moveItem(from source: URL, to destination: URL) throws {}
+    func prepareDeletion(rootURL: URL, currentDirectoryURL: URL, userPath: String) throws -> PreparedDeletion {
+        PreparedDeletion(
+            targetURL: rootURL.appendingPathComponent(userPath),
+            rootRelativePath: userPath,
+            fileIdentity: LocalFileIdentity(resourceIdentifier: Data([0x01]))
+        )
+    }
     func deletionIdentity(at url: URL) throws -> LocalFileIdentity {
         LocalFileIdentity(resourceIdentifier: Data([0x01]))
     }
@@ -299,4 +333,82 @@ private final class IdentityMismatchFileSystem: LocalFileSystemAccess, @unchecke
         revalidationCallCount += 1
         throw LocalFileSystemError.deletionRequestExpired
     }
+}
+
+private final class RequestPreparationRaceFileSystem: LocalFileSystemAccess, @unchecked Sendable {
+    private let rootURL: URL
+    private var replacementIsSymlink = false
+    private(set) var prepareCallCount = 0
+
+    init(rootURL: URL) {
+        self.rootURL = rootURL
+    }
+
+    func symbolicLinkDestination(at url: URL) throws -> String? {
+        guard url.lastPathComponent == "target.txt" else { return nil }
+        return replacementIsSymlink ? "replacement.txt" : nil
+    }
+
+    func isDirectory(at url: URL) throws -> Bool { false }
+    func list(at url: URL) throws -> [String] { [] }
+    func readText(at url: URL) throws -> String { "" }
+    func prepareForEditing(at url: URL) throws {}
+    func createDirectory(at url: URL) throws {}
+    func touch(at url: URL) throws {}
+    func copyItem(from source: URL, to destination: URL) throws {}
+    func moveItem(from source: URL, to destination: URL) throws {}
+    func deletionIdentity(at url: URL) throws -> LocalFileIdentity {
+        LocalFileIdentity(resourceIdentifier: Data([0x02]))
+    }
+    func prepareDeletion(rootURL: URL, currentDirectoryURL: URL, userPath: String) throws -> PreparedDeletion {
+        prepareCallCount += 1
+        let resolver = WorkspacePathResolver(
+            rootURL: rootURL,
+            currentDirectoryURL: currentDirectoryURL,
+            pathInspector: self
+        )
+        _ = try resolver.resolveWithoutSymbolicLinks(userPath)
+        replacementIsSymlink = true
+        do {
+            _ = try resolver.resolveWithoutSymbolicLinks(userPath)
+            XCTFail("the replacement symlink must not resolve as the original lexical target")
+        } catch {
+            throw LocalFileSystemError.deletionRequestExpired
+        }
+        throw LocalFileSystemError.deletionRequestExpired
+    }
+    func revalidateAndRemoveFile(rootURL: URL, rootRelativePath: String, expectedIdentity: LocalFileIdentity) throws {
+        XCTFail("an expired request must not reach confirmation")
+    }
+}
+
+private final class MismatchedPreparedDeletionFileSystem: LocalFileSystemAccess, @unchecked Sendable {
+    private let rootURL: URL
+    private(set) var prepareCallCount = 0
+
+    init(rootURL: URL) {
+        self.rootURL = rootURL
+    }
+
+    func symbolicLinkDestination(at url: URL) throws -> String? { nil }
+    func isDirectory(at url: URL) throws -> Bool { false }
+    func list(at url: URL) throws -> [String] { [] }
+    func readText(at url: URL) throws -> String { "" }
+    func prepareForEditing(at url: URL) throws {}
+    func createDirectory(at url: URL) throws {}
+    func touch(at url: URL) throws {}
+    func copyItem(from source: URL, to destination: URL) throws {}
+    func moveItem(from source: URL, to destination: URL) throws {}
+    func deletionIdentity(at url: URL) throws -> LocalFileIdentity {
+        LocalFileIdentity(resourceIdentifier: Data([0x03]))
+    }
+    func prepareDeletion(rootURL: URL, currentDirectoryURL: URL, userPath: String) throws -> PreparedDeletion {
+        prepareCallCount += 1
+        return PreparedDeletion(
+            targetURL: rootURL.appendingPathComponent("target.txt"),
+            rootRelativePath: "replacement.txt",
+            fileIdentity: LocalFileIdentity(resourceIdentifier: Data([0x03]))
+        )
+    }
+    func revalidateAndRemoveFile(rootURL: URL, rootRelativePath: String, expectedIdentity: LocalFileIdentity) throws {}
 }

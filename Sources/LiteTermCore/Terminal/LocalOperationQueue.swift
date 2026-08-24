@@ -69,3 +69,68 @@ public final class LocalOperationQueue {
         pendingOperationCost -= cost
     }
 }
+
+/// Serializes workspace-root transitions without retaining an unbounded closure chain.
+///
+/// At most one transition runs while one safety transition and the latest normal
+/// transition wait. Safety work is always selected before normal work.
+@MainActor
+public final class WorkspaceTransitionScheduler {
+    public typealias Operation = @Sendable () async -> Void
+
+    private var runningTask: Task<Void, Never>?
+    private var pendingSafety: Operation?
+    private var pendingNormal: Operation?
+
+    public init() {}
+
+    public var hasPendingSafety: Bool { pendingSafety != nil }
+    public var hasPendingNormal: Bool { pendingNormal != nil }
+    public var retainedTransitionCount: Int {
+        (runningTask == nil ? 0 : 1) + (pendingSafety == nil ? 0 : 1) + (pendingNormal == nil ? 0 : 1)
+    }
+
+    public func submitNormal(_ operation: @escaping Operation) {
+        submit(operation, safety: false)
+    }
+
+    public func submitSafety(_ operation: @escaping Operation) {
+        submit(operation, safety: true)
+    }
+
+    public func drain() async {
+        while let task = runningTask {
+            await task.value
+        }
+    }
+
+    private func submit(_ operation: @escaping Operation, safety: Bool) {
+        guard runningTask != nil else {
+            start(operation)
+            return
+        }
+        if safety {
+            pendingSafety = operation
+        } else {
+            pendingNormal = operation
+        }
+    }
+
+    private func start(_ operation: @escaping Operation) {
+        runningTask = Task { @MainActor [weak self] in
+            await operation()
+            self?.advance()
+        }
+    }
+
+    private func advance() {
+        runningTask = nil
+        if let safety = pendingSafety {
+            pendingSafety = nil
+            start(safety)
+        } else if let normal = pendingNormal {
+            pendingNormal = nil
+            start(normal)
+        }
+    }
+}

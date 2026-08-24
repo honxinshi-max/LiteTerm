@@ -176,6 +176,32 @@ struct CoordinatedLocalFileSystem: LocalFileSystemAccess {
         try resolve(result, coordinationError: coordinationError)
     }
 
+    func prepareDeletion(
+        rootURL: URL,
+        currentDirectoryURL: URL,
+        userPath: String
+    ) throws -> PreparedDeletion {
+        let lexicalTarget = try lexicalTarget(
+            rootURL: rootURL,
+            currentDirectoryURL: currentDirectoryURL,
+            userPath: userPath
+        )
+        return try coordinateRead(at: lexicalTarget) { coordinatedTargetURL in
+            guard coordinatedTargetURL.path == lexicalTarget.path else {
+                throw LocalFileSystemError.deletionRequestExpired
+            }
+            let prepared = try directFileSystem.prepareDeletion(
+                rootURL: rootURL,
+                currentDirectoryURL: currentDirectoryURL,
+                userPath: userPath
+            )
+            guard prepared.targetURL.path == lexicalTarget.path else {
+                throw LocalFileSystemError.deletionRequestExpired
+            }
+            return prepared
+        }
+    }
+
     func deletionIdentity(at url: URL) throws -> LocalFileIdentity {
         try coordinateRead(at: url) { try directFileSystem.deletionIdentity(at: $0) }
     }
@@ -271,6 +297,39 @@ struct CoordinatedLocalFileSystem: LocalFileSystemAccess {
             return false
         }
         return zip(rootComponents, candidateComponents).allSatisfy(==)
+    }
+
+    private func lexicalTarget(
+        rootURL: URL,
+        currentDirectoryURL: URL,
+        userPath: String
+    ) throws -> URL {
+        let rootComponents = rootURL.standardizedFileURL.pathComponents
+        let currentComponents = currentDirectoryURL.standardizedFileURL.pathComponents
+        guard currentComponents.count >= rootComponents.count,
+              zip(rootComponents, currentComponents).allSatisfy(==) else {
+            throw WorkspacePathResolverError.outsideWorkspace
+        }
+
+        var components = userPath.hasPrefix("/") ? rootComponents : currentComponents
+        for component in userPath.split(separator: "/", omittingEmptySubsequences: true).map(String.init) {
+            switch component {
+            case ".":
+                continue
+            case "..":
+                guard components.count > rootComponents.count else {
+                    throw WorkspacePathResolverError.outsideWorkspace
+                }
+                components.removeLast()
+            default:
+                components.append(component)
+            }
+        }
+        let target = URL(fileURLWithPath: NSString.path(withComponents: components))
+        guard isContained(target, by: rootURL.standardizedFileURL) else {
+            throw WorkspacePathResolverError.outsideWorkspace
+        }
+        return target
     }
 }
 
