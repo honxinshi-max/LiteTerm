@@ -1,14 +1,9 @@
 import SwiftUI
 
-enum HostKeyTrustKind {
-    case firstUse
-    case replacement
-}
-
 struct HostKeyTrustSheet: View {
     let hostLabel: String
     let presentedFingerprint: String
-    let kind: HostKeyTrustKind
+    let kind: SSHHostTrustKind
     let onTrust: () -> Void
     let onCancel: () -> Void
 

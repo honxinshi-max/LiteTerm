@@ -19,19 +19,33 @@ enum HostStoreError: Error, LocalizedError {
     }
 }
 
+struct GeneratedPublicKeyPresentation: Identifiable {
+    let hostID: UUID
+    let hostLabel: String
+    let publicKey: String
+
+    var id: UUID { hostID }
+}
+
 @MainActor
 final class HostStore: ObservableObject {
     @Published private(set) var hosts: [SSHHost] = []
     @Published private(set) var loadIssues: [HostRecordIssue] = []
     @Published private(set) var credentialStates: [UUID: HostCredentialState] = [:]
     @Published private(set) var errorMessage: String?
+    @Published var generatedPublicKey: GeneratedPublicKeyPresentation?
 
     private let repository: HostRepository
     private let secrets: any HostSecretStoring
     private let credentialCoordinator: HostCredentialCoordinator
+    private let keyManager: Ed25519KeyManager
     private var repositoryAllowsWrites = true
 
     convenience init() {
+        self.init(secrets: KeychainStore())
+    }
+
+    convenience init(secrets: any HostSecretStoring) {
         let baseURL = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -39,13 +53,14 @@ final class HostStore: ObservableObject {
         let fileURL = baseURL
             .appendingPathComponent("LiteTerm", isDirectory: true)
             .appendingPathComponent("hosts.json")
-        self.init(repository: HostRepository(fileURL: fileURL), secrets: KeychainStore())
+        self.init(repository: HostRepository(fileURL: fileURL), secrets: secrets)
     }
 
     init(repository: HostRepository, secrets: any HostSecretStoring) {
         self.repository = repository
         self.secrets = secrets
         credentialCoordinator = HostCredentialCoordinator(metadata: repository, secrets: secrets)
+        keyManager = Ed25519KeyManager(secrets: secrets)
         reload()
     }
 
@@ -111,6 +126,38 @@ final class HostStore: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func generateKey(for host: SSHHost) {
+        do {
+            guard host.authenticationKind == .generatedKey else { return }
+            let publicKey = try keyManager.generateIfNeeded(for: host.id)
+            credentialStates = credentialCoordinator.inspect(hosts)
+            generatedPublicKey = GeneratedPublicKeyPresentation(
+                hostID: host.id,
+                hostLabel: host.label,
+                publicKey: publicKey
+            )
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func showGeneratedPublicKey(for host: SSHHost) {
+        do {
+            generatedPublicKey = GeneratedPublicKeyPresentation(
+                hostID: host.id,
+                hostLabel: host.label,
+                publicKey: try keyManager.publicKey(for: host.id)
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func dismissGeneratedPublicKey() {
+        generatedPublicKey = nil
     }
 
     func dismissError() {

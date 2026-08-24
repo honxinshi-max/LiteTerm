@@ -3,6 +3,8 @@ import SwiftUI
 
 struct HostListScreen: View {
     @ObservedObject var store: HostStore
+    @ObservedObject var sshSession: SSHSessionController
+    let onConnect: (SSHHost) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var editedHost: SSHHost?
     @State private var isCreatingHost = false
@@ -30,16 +32,19 @@ struct HostListScreen: View {
                         }
                         Section("Saved hosts") {
                             ForEach(store.hosts) { host in
-                                Button {
-                                    editedHost = host
-                                } label: {
+                                HStack(spacing: 12) {
                                     HostRow(
                                         host: host,
                                         credentialState: store.credentialStates[host.id]
                                     )
+                                    Spacer(minLength: 8)
+                                    hostActions(for: host)
                                 }
-                                .buttonStyle(.plain)
                                 .swipeActions {
+                                    Button("Edit") {
+                                        editedHost = host
+                                    }
+                                    .tint(.blue)
                                     Button("Delete", role: .destructive) {
                                         pendingDeletion = host
                                     }
@@ -69,6 +74,11 @@ struct HostListScreen: View {
         .sheet(item: $editedHost) { host in
             HostEditorScreen(store: store, host: host)
         }
+        .sheet(item: $store.generatedPublicKey) { presentation in
+            GeneratedPublicKeySheet(presentation: presentation) {
+                store.dismissGeneratedPublicKey()
+            }
+        }
         .confirmationDialog(
             "Delete this host and its saved credentials?",
             isPresented: deletionBinding,
@@ -76,6 +86,9 @@ struct HostListScreen: View {
         ) {
             Button("Delete host", role: .destructive) {
                 if let pendingDeletion {
+                    if sshSession.activeHostID == pendingDeletion.id {
+                        sshSession.disconnect()
+                    }
                     store.delete(pendingDeletion)
                 }
                 pendingDeletion = nil
@@ -103,6 +116,79 @@ struct HostListScreen: View {
             get: { store.errorMessage != nil },
             set: { if !$0 { store.dismissError() } }
         )
+    }
+
+    @ViewBuilder
+    private func hostActions(for host: SSHHost) -> some View {
+        let credentialState = store.credentialStates[host.id]
+        if host.authenticationKind == .generatedKey, credentialState == .setupRequired {
+            Button("Generate Key") {
+                store.generateKey(for: host)
+            }
+            .buttonStyle(.bordered)
+        } else if isActiveConnection(for: host) {
+            Button("Disconnect", role: .destructive) {
+                sshSession.disconnect()
+            }
+            .buttonStyle(.bordered)
+        } else {
+            Button("Connect") {
+                onConnect(host)
+                dismiss()
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(credentialState != .ready)
+        }
+
+        if host.authenticationKind == .generatedKey, credentialState == .ready {
+            Button {
+                store.showGeneratedPublicKey(for: host)
+            } label: {
+                Image(systemName: "doc.on.doc")
+            }
+            .accessibilityLabel("Show generated public key")
+        }
+    }
+
+    private func isActiveConnection(for host: SSHHost) -> Bool {
+        guard sshSession.activeHostID == host.id else { return false }
+        switch sshSession.state {
+        case .disconnected, .failed:
+            return false
+        default:
+            return true
+        }
+    }
+}
+
+private struct GeneratedPublicKeySheet: View {
+    let presentation: GeneratedPublicKeyPresentation
+    let onDone: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Install this public key in the remote account's authorized_keys file.")
+                    .foregroundStyle(.secondary)
+                Text(presentation.publicKey)
+                    .font(.body.monospaced())
+                    .textSelection(.enabled)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                Text("LiteTerm never displays or exports the private key.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding()
+            .navigationTitle(presentation.hostLabel)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done", action: onDone)
+                }
+            }
+        }
     }
 }
 

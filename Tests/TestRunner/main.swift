@@ -19,6 +19,12 @@ struct LiteTermCoreTestRunner {
             return
         }
 
+        if CommandLine.arguments.contains("--ssh-state") {
+            checkSSHConnectionStateAndReconnect(&failures)
+            finish(failures, passingCheckCount: 1)
+            return
+        }
+
         checkHistoryDropsOldestLine(&failures)
         checkHistoryClear(&failures)
         checkZeroHistoryLimit(&failures)
@@ -45,7 +51,9 @@ struct LiteTermCoreTestRunner {
         checkReconnectPolicy(&failures)
         checkHostCredentialTransactions(&failures)
 
-        finish(failures, passingCheckCount: 25)
+        checkSSHConnectionStateAndReconnect(&failures)
+
+        finish(failures, passingCheckCount: 26)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -1088,6 +1096,57 @@ struct LiteTermCoreTestRunner {
             expect(deleteRetry.failure == nil && deleteRetry.hosts.isEmpty && deleteMetadata.hosts.isEmpty, "delete metadata failure can be retried to completion", &failures)
         } catch {
             failures.append("host credential transaction runner completes: \(error)")
+        }
+    }
+
+    private static func checkSSHConnectionStateAndReconnect(_ failures: inout [String]) {
+        var reducer = SSHConnectionStateReducer()
+        let staleGeneration = reducer.beginConnection()
+        let generation = reducer.beginConnection()
+        expect(generation > staleGeneration, "SSH session generation increases monotonically", &failures)
+        expect(!reducer.reduce(.hostKeyValidated, generation: staleGeneration), "stale SSH callbacks are rejected", &failures)
+        expect(reducer.state == .connecting, "stale SSH callback does not mutate state", &failures)
+        expect(reducer.reduce(.hostKeyValidationRequired, generation: generation), "first-use host key pauses the current session", &failures)
+        expect(reducer.state == .awaitingHostTrust, "host trust state is observable", &failures)
+        expect(reducer.reduce(.hostKeyValidated, generation: generation), "trusted host key begins authentication", &failures)
+        expect(reducer.reduce(.authenticationSucceeded, generation: generation), "authenticated SSH session connects", &failures)
+
+        let reconnectGeneration = reducer.beginReconnect(attempt: 1)
+        expect(reconnectGeneration > generation, "SSH reconnect advances the session generation", &failures)
+        expect(!reducer.reduce(.failed(.transport), generation: generation), "reconnect rejects the prior attempt callback", &failures)
+
+        let disconnectedGeneration = reducer.disconnect()
+        expect(disconnectedGeneration > reconnectGeneration, "manual disconnect invalidates the session generation", &failures)
+        expect(!reducer.reduce(.failed(.transport), generation: reconnectGeneration), "disconnected session rejects in-flight failures", &failures)
+
+        var reconnect = SSHReconnectOrchestrator(isEnabled: true)
+        reconnect.userInitiatedConnection()
+        reconnect.connectionEstablished()
+        let expected = [
+            SSHReconnectDirective(attempt: 1, delay: .seconds(1)),
+            SSHReconnectDirective(attempt: 2, delay: .seconds(2)),
+            SSHReconnectDirective(attempt: 3, delay: .seconds(4))
+        ]
+        expect(reconnect.connectionFailed(.transportLoss) == expected[0], "first reconnect waits one second", &failures)
+        expect(reconnect.connectionFailed(.transportLoss) == expected[1], "second reconnect waits two seconds", &failures)
+        expect(reconnect.connectionFailed(.transportLoss) == expected[2], "third reconnect waits four seconds", &failures)
+        expect(reconnect.connectionFailed(.transportLoss) == nil, "fourth reconnect is not scheduled", &failures)
+
+        var foreground = SSHReconnectOrchestrator(isEnabled: true)
+        foreground.userInitiatedConnection()
+        foreground.connectionEstablished()
+        expect(foreground.scenePhaseChanged(isActive: false) == nil, "inactive scene schedules no work", &failures)
+        expect(foreground.connectionFailed(.transportLoss) == nil, "inactive scene blocks transport retry", &failures)
+        expect(foreground.scenePhaseChanged(isActive: true) == expected[0], "active scene resumes a wanted connection", &failures)
+        foreground.manualDisconnect()
+        expect(foreground.scenePhaseChanged(isActive: false) == nil, "manual disconnect remains idle when inactive", &failures)
+        expect(foreground.scenePhaseChanged(isActive: true) == nil, "manual disconnect does not reconnect on activation", &failures)
+
+        for failure in [SSHConnectionFailure.authenticationRejected, .hostKeyMismatch] {
+            var secureStop = SSHReconnectOrchestrator(isEnabled: true)
+            secureStop.userInitiatedConnection()
+            expect(secureStop.connectionFailed(failure) == nil, "security failure schedules no reconnect", &failures)
+            expect(!secureStop.wantsConnection, "security failure cancels reconnect intent", &failures)
         }
     }
 

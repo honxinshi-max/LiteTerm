@@ -27,7 +27,11 @@ struct TerminalScreen: View {
             .ignoresSafeArea()
         }
         .sheet(isPresented: $model.isShowingHosts) {
-            HostListScreen(store: model.hostStore)
+            HostListScreen(
+                store: model.hostStore,
+                sshSession: model.sshSession,
+                onConnect: model.connect(to:)
+            )
         }
         .sheet(item: $model.editorDocument) { document in
             TextFileEditor(url: document.url) { _ in
@@ -39,6 +43,7 @@ struct TerminalScreen: View {
         } message: {
             Text(model.authorizationErrorMessage ?? "Folder authorization failed.")
         }
+        .background(SSHHostTrustPresenter(session: model.sshSession))
     }
 
     private var controls: some View {
@@ -104,6 +109,24 @@ struct TerminalScreen: View {
             get: { model.authorizationErrorMessage != nil },
             set: { if !$0 { model.authorizationErrorMessage = nil } }
         )
+    }
+}
+
+private struct SSHHostTrustPresenter: View {
+    @ObservedObject var session: SSHSessionController
+
+    var body: some View {
+        Color.clear
+            .sheet(item: $session.pendingHostTrust) { request in
+                HostKeyTrustSheet(
+                    hostLabel: request.hostLabel,
+                    presentedFingerprint: request.fingerprint,
+                    kind: request.kind,
+                    onTrust: session.confirmHostTrust,
+                    onCancel: session.cancelHostTrust
+                )
+                .interactiveDismissDisabled()
+            }
     }
 }
 

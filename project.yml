@@ -13,6 +13,18 @@ packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm.git
     revision: dd2fb8ac5b861e7bf617c872895e338f38165648
+  SwiftNIOSSH:
+    url: https://github.com/apple/swift-nio-ssh.git
+    revision: 3ec281496f28a3b6581afd946b759e2642f5cd8d
+  SwiftNIOTransportServices:
+    url: https://github.com/apple/swift-nio-transport-services.git
+    revision: 67787bb645a5e67d2edcdfbe48a216cc549222d5
+  SwiftNIO:
+    url: https://github.com/apple/swift-nio.git
+    revision: 0b18836bd8b0162e7e17a995a3fbee20ed8f3b2b
+  SwiftCrypto:
+    url: https://github.com/apple/swift-crypto.git
+    revision: 47d3869a7291f085c1fb9fb1e6d3b97a793f45c6
 
 targets:
   LiteTermCore:
@@ -29,10 +41,22 @@ targets:
     platform: iOS
     sources:
       - LiteTerm
+      - path: THIRD_PARTY_NOTICES.md
+        buildPhase: resources
     dependencies:
       - target: LiteTermCore
       - package: SwiftTerm
         product: SwiftTerm
+      - package: SwiftNIOSSH
+        product: NIOSSH
+      - package: SwiftNIOTransportServices
+        product: NIOTransportServices
+      - package: SwiftNIO
+        product: NIOCore
+      - package: SwiftNIO
+        product: NIOConcurrencyHelpers
+      - package: SwiftCrypto
+        product: Crypto
     settings:
       base:
         CODE_SIGN_ENTITLEMENTS: LiteTerm/Resources/LiteTerm.entitlements

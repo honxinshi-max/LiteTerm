@@ -15,7 +15,7 @@ struct LiteTermApp: App {
                     case .background:
                         model.didEnterBackground()
                     case .inactive:
-                        break
+                        model.didBecomeInactive()
                     @unknown default:
                         break
                     }

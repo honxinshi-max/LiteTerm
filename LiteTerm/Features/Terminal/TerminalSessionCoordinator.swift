@@ -13,7 +13,10 @@ enum TerminalMode: String, CaseIterable, Identifiable {
 enum RemoteTerminalStatus: String {
     case disconnected = "Disconnected"
     case connecting = "Connecting"
+    case awaitingHostTrust = "Verify host key"
+    case authenticating = "Authenticating"
     case connected = "Connected"
+    case reconnecting = "Reconnecting"
     case failed = "Connection failed"
 }
 
@@ -151,7 +154,7 @@ final class TerminalSessionCoordinator: ObservableObject {
     }
 
     func updateRemoteStatus(_ status: RemoteTerminalStatus) {
-        if status == .connecting {
+        if status == .connecting || status == .reconnecting {
             remoteOutputSanitizer = RemoteOutputSanitizer()
         }
         remoteStatus = status
