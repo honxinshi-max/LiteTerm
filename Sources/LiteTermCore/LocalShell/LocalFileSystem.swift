@@ -1,6 +1,11 @@
 import Foundation
 
-public protocol LocalFileSystemAccess: Sendable {
+public protocol WorkspacePathInspecting: Sendable {
+    func symbolicLinkDestination(at url: URL) throws -> String?
+    func isDirectory(at url: URL) throws -> Bool
+}
+
+public protocol LocalFileSystemAccess: WorkspacePathInspecting {
     func list(at url: URL) throws -> [String]
     func readText(at url: URL) throws -> String
     func prepareForEditing(at url: URL) throws
@@ -26,6 +31,18 @@ public struct LocalFileSystem: LocalFileSystemAccess {
 
     public init(rootURL: URL) {
         self.rootURL = rootURL
+    }
+
+    public func symbolicLinkDestination(at url: URL) throws -> String? {
+        try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)
+    }
+
+    public func isDirectory(at url: URL) throws -> Bool {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        return isDirectory.boolValue
     }
 
     public func list(at url: URL) throws -> [String] {

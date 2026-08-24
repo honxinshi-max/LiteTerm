@@ -90,10 +90,38 @@ enum CoordinatedFileAccess {
 }
 
 struct CoordinatedLocalFileSystem: LocalFileSystemAccess {
+    private let rootURL: URL
     private let directFileSystem: LocalFileSystem
 
     init(rootURL: URL) {
+        self.rootURL = rootURL.standardizedFileURL
         directFileSystem = LocalFileSystem(rootURL: rootURL)
+    }
+
+    func symbolicLinkDestination(at url: URL) throws -> String? {
+        let standardizedURL = url.standardizedFileURL
+        if standardizedURL == rootURL {
+            return try coordinateRead(at: standardizedURL) {
+                try directFileSystem.symbolicLinkDestination(at: $0)
+            }
+        }
+
+        if isContained(standardizedURL, by: rootURL) {
+            let parentURL = standardizedURL.deletingLastPathComponent()
+            return try coordinateRead(at: parentURL) { coordinatedParentURL in
+                try directFileSystem.symbolicLinkDestination(
+                    at: coordinatedParentURL.appendingPathComponent(standardizedURL.lastPathComponent)
+                )
+            }
+        }
+
+        return try coordinateRead(at: standardizedURL) {
+            try directFileSystem.symbolicLinkDestination(at: $0)
+        }
+    }
+
+    func isDirectory(at url: URL) throws -> Bool {
+        try coordinateRead(at: url) { try directFileSystem.isDirectory(at: $0) }
     }
 
     func list(at url: URL) throws -> [String] {
@@ -210,6 +238,15 @@ struct CoordinatedLocalFileSystem: LocalFileSystemAccess {
             throw CoordinatedFileAccessError.coordinationFailed
         }
         return try value.get()
+    }
+
+    private func isContained(_ url: URL, by root: URL) -> Bool {
+        let rootComponents = root.pathComponents
+        let candidateComponents = url.pathComponents
+        guard candidateComponents.count >= rootComponents.count else {
+            return false
+        }
+        return zip(rootComponents, candidateComponents).allSatisfy(==)
     }
 }
 

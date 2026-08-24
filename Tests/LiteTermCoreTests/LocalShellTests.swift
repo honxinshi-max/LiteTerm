@@ -121,6 +121,8 @@ final class LocalShellTests: XCTestCase {
 }
 
 private struct FixtureFileSystem: LocalFileSystemAccess {
+    func symbolicLinkDestination(at url: URL) throws -> String? { nil }
+    func isDirectory(at url: URL) throws -> Bool { true }
     func list(at url: URL) throws -> [String] { ["coordinated-entry"] }
     func readText(at url: URL) throws -> String { "" }
     func prepareForEditing(at url: URL) throws {}

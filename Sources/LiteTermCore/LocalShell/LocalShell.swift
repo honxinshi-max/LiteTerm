@@ -42,7 +42,12 @@ public actor LocalShell {
         historyLimit: Int = 2_000,
         fileSystem: (any LocalFileSystemAccess)? = nil
     ) {
-        let bootstrapResolver = WorkspacePathResolver(rootURL: rootURL, currentDirectoryURL: rootURL)
+        let bootstrapFileSystem: any LocalFileSystemAccess = fileSystem ?? LocalFileSystem(rootURL: rootURL)
+        let bootstrapResolver = WorkspacePathResolver(
+            rootURL: rootURL,
+            currentDirectoryURL: rootURL,
+            pathInspector: bootstrapFileSystem
+        )
         let resolvedRoot = (try? bootstrapResolver.resolve("/")) ?? rootURL
         self.rootURL = resolvedRoot
         self.fileSystem = fileSystem ?? LocalFileSystem(rootURL: resolvedRoot)
@@ -55,7 +60,11 @@ public actor LocalShell {
 
         do {
             let command = try parser.parse(input)
-            let resolver = WorkspacePathResolver(rootURL: rootURL, currentDirectoryURL: currentDirectoryURL)
+            let resolver = WorkspacePathResolver(
+                rootURL: rootURL,
+                currentDirectoryURL: currentDirectoryURL,
+                pathInspector: fileSystem
+            )
             return try execute(command, resolver: resolver)
         } catch {
             return ShellExecution(outputLines: [message(for: error)])
@@ -71,8 +80,7 @@ public actor LocalShell {
             return ShellExecution(outputLines: try fileSystem.list(at: target))
         case let .cd(path):
             let target = try resolver.resolve(path)
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            guard try fileSystem.isDirectory(at: target) else {
                 throw CocoaError(.fileNoSuchFile)
             }
             currentDirectoryURL = target

@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import LiteTermCore
 
 struct EditorDocument: Identifiable {
     let url: URL
@@ -18,6 +19,7 @@ final class AppModel: ObservableObject {
 
     let folderAuthorizationStore: FolderAuthorizationStore
     let terminalSession: TerminalSessionCoordinator
+    private let workspaceTransitionQueue = LocalOperationQueue()
 
     var onHostsRequested: (() -> Void)?
     var canRequestHosts: Bool { onHostsRequested != nil }
@@ -61,22 +63,15 @@ final class AppModel: ObservableObject {
 
     func completeFolderSelection(_ url: URL) {
         isShowingFolderPicker = false
-        do {
-            let root = try folderAuthorizationStore.select(url: url)
-            activeWorkspaceName = root.lastPathComponent
-            terminalSession.replaceLocalRoot(
-                with: root,
-                coordinateFileAccess: root.standardizedFileURL != folderAuthorizationStore.documentsURL.standardizedFileURL
-            )
-        } catch {
-            authorizationErrorMessage = error.localizedDescription
+        workspaceTransitionQueue.enqueue { [weak self] in
+            await self?.selectExternalFolder(url)
         }
     }
 
     func useAppDocuments() {
-        folderAuthorizationStore.useAppDocuments()
-        activeWorkspaceName = folderAuthorizationStore.documentsURL.lastPathComponent
-        terminalSession.replaceLocalRoot(with: folderAuthorizationStore.documentsURL)
+        workspaceTransitionQueue.enqueue { [weak self] in
+            await self?.switchToAppDocuments(clearBookmark: true)
+        }
     }
 
     func requestHosts() {
@@ -84,23 +79,58 @@ final class AppModel: ObservableObject {
     }
 
     func didBecomeActive() {
-        do {
-            let root = try folderAuthorizationStore.restore()
-            activeWorkspaceName = root.lastPathComponent
-            terminalSession.replaceLocalRoot(
-                with: root,
-                coordinateFileAccess: root.standardizedFileURL != folderAuthorizationStore.documentsURL.standardizedFileURL
-            )
-        } catch {
-            activeWorkspaceName = folderAuthorizationStore.documentsURL.lastPathComponent
-            terminalSession.replaceLocalRoot(with: folderAuthorizationStore.documentsURL)
-            authorizationErrorMessage = error.localizedDescription
+        workspaceTransitionQueue.enqueue { [weak self] in
+            await self?.restoreWorkspaceAfterActivation()
         }
     }
 
     func didEnterBackground() {
-        folderAuthorizationStore.stopAccessing()
+        workspaceTransitionQueue.enqueue { [weak self] in
+            await self?.switchToAppDocuments(clearBookmark: false)
+        }
+    }
+
+    private func selectExternalFolder(_ url: URL) async {
+        await terminalSession.suspendLocalInputAndDrain()
+        do {
+            let root = try folderAuthorizationStore.select(url: url)
+            terminalSession.installLocalRoot(
+                root,
+                coordinateFileAccess: root.standardizedFileURL != folderAuthorizationStore.documentsURL.standardizedFileURL
+            )
+            activeWorkspaceName = root.lastPathComponent
+        } catch {
+            authorizationErrorMessage = error.localizedDescription
+        }
+        terminalSession.resumeLocalInput()
+    }
+
+    private func switchToAppDocuments(clearBookmark: Bool) async {
+        await terminalSession.suspendLocalInputAndDrain()
+        if clearBookmark {
+            folderAuthorizationStore.useAppDocuments()
+        } else {
+            folderAuthorizationStore.stopAccessing()
+        }
+        terminalSession.installLocalRoot(folderAuthorizationStore.documentsURL)
         activeWorkspaceName = folderAuthorizationStore.documentsURL.lastPathComponent
-        terminalSession.replaceLocalRoot(with: folderAuthorizationStore.documentsURL)
+        terminalSession.resumeLocalInput()
+    }
+
+    private func restoreWorkspaceAfterActivation() async {
+        await terminalSession.suspendLocalInputAndDrain()
+        do {
+            let root = try folderAuthorizationStore.restore()
+            terminalSession.installLocalRoot(
+                root,
+                coordinateFileAccess: root.standardizedFileURL != folderAuthorizationStore.documentsURL.standardizedFileURL
+            )
+            activeWorkspaceName = root.lastPathComponent
+        } catch {
+            terminalSession.installLocalRoot(folderAuthorizationStore.documentsURL)
+            activeWorkspaceName = folderAuthorizationStore.documentsURL.lastPathComponent
+            authorizationErrorMessage = error.localizedDescription
+        }
+        terminalSession.resumeLocalInput()
     }
 }

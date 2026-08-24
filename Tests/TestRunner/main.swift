@@ -24,13 +24,17 @@ struct LiteTermCoreTestRunner {
         await checkLocalShellEditorClearAndSizeLimit(&failures)
         await checkLocalShellDirectoryEditAndEmptyCat(&failures)
         await checkInjectedFileAccessBoundary(&failures)
+        checkRemoteOutputSanitization(&failures)
+        checkLocalTerminalInputOrdering(&failures)
+        await checkCoordinatedPathInspection(&failures)
+        failures.append(contentsOf: await checkLocalOperationQueue())
 
         guard failures.isEmpty else {
             failures.forEach { print("FAIL: \($0)") }
             exit(EXIT_FAILURE)
         }
 
-        print("PASS: 17 LiteTermCore checks")
+        print("PASS: 21 LiteTermCore checks")
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -293,6 +297,151 @@ struct LiteTermCoreTestRunner {
         expect(listing.outputLines == ["coordinated-entry"], "local shell uses its injected file access boundary", &failures)
     }
 
+    private static func checkRemoteOutputSanitization(_ failures: inout [String]) {
+        var sanitizer = RemoteOutputSanitizer()
+        let ordinary = Array("hello".utf8) + [0x1B, 0x5B, 0x41]
+        expect(sanitizer.sanitize(ordinary) == ordinary, "remote sanitizer preserves ordinary terminal bytes", &failures)
+
+        let sevenBit = [UInt8(0x61), 0x1B, 0x50] + Array("qpayload".utf8) + [0x1B, 0x5C, 0x62]
+        expect(sanitizer.sanitize(sevenBit) == [0x61, 0x62], "remote sanitizer strips complete seven-bit DCS", &failures)
+
+        let eightBit = [UInt8(0x63), 0x90] + Array("payload".utf8) + [0x9C, 0x64]
+        expect(sanitizer.sanitize(eightBit) == [0x63, 0x64], "remote sanitizer strips complete eight-bit DCS", &failures)
+
+        expect(sanitizer.sanitize([0x61, 0x1B]) == [0x61], "remote sanitizer holds a split escape introducer", &failures)
+        expect(sanitizer.bufferedByteCount == 1, "remote sanitizer buffers at most the pending escape byte", &failures)
+        expect(sanitizer.sanitize([0x50, 0x71, 0x1B]) == [], "remote sanitizer strips a split DCS body", &failures)
+        expect(sanitizer.sanitize([0x5C, 0x62]) == [0x62], "remote sanitizer recognizes a split DCS terminator", &failures)
+
+        _ = sanitizer.sanitize([0x1B, 0x50])
+        for _ in 0..<128 {
+            expect(sanitizer.sanitize(Array(repeating: 0x71, count: 8_192)).isEmpty, "remote sanitizer emits no DCS payload", &failures)
+            expect(sanitizer.bufferedByteCount == 0, "remote sanitizer retains no DCS payload bytes", &failures)
+        }
+        expect(sanitizer.sanitize([0x1B, 0x5C, 0x7A]) == [0x7A], "remote sanitizer resumes after a bounded DCS payload", &failures)
+    }
+
+    private static func checkLocalTerminalInputOrdering(_ failures: inout [String]) {
+        var reducer = LocalTerminalInputReducer()
+        expect(
+            reducer.reduce(Array("pwd\r".utf8)) == [
+                .echo(Array("pwd".utf8)),
+                .submit("pwd")
+            ],
+            "local input emits pwd echo before its submit event",
+            &failures
+        )
+
+        reducer.reset()
+        expect(
+            reducer.reduce(Array("pwd\r\nls\r".utf8)) == [
+                .echo(Array("pwd".utf8)),
+                .submit("pwd"),
+                .echo(Array("ls".utf8)),
+                .submit("ls")
+            ],
+            "multiline paste preserves echo and submit byte order",
+            &failures
+        )
+
+        reducer.reset()
+        expect(
+            reducer.reduce(Array("ab".utf8) + [0x7F] + Array("c".utf8) + [0x03]) == [
+                .echo(Array("ab".utf8)),
+                .erase,
+                .echo(Array("c".utf8)),
+                .interrupt
+            ],
+            "local input flushes printable runs before controls",
+            &failures
+        )
+    }
+
+    private static func checkCoordinatedPathInspection(_ failures: inout [String]) async {
+        let root = URL(fileURLWithPath: "/tmp/LiteTerm-runner-inspected-root-\(UUID().uuidString)", isDirectory: true)
+        let outside = URL(fileURLWithPath: "/tmp/LiteTerm-runner-inspected-outside-\(UUID().uuidString)", isDirectory: true)
+        let fileSystem = RunnerInspectingFileSystem(
+            symbolicLinks: [root.appendingPathComponent("escape").path: outside.path]
+        )
+        let resolver = WorkspacePathResolver(
+            rootURL: root,
+            currentDirectoryURL: root,
+            pathInspector: fileSystem
+        )
+
+        do {
+            _ = try resolver.resolve("escape/secret.txt")
+            failures.append("workspace resolver uses injected symlink inspection")
+        } catch WorkspacePathResolverError.outsideWorkspace {
+            // Expected behavior proves the injected boundary supplied the virtual symlink.
+        } catch {
+            failures.append("workspace resolver classifies the injected symlink escape")
+        }
+
+        let cdFileSystem = RunnerInspectingFileSystem()
+        let cdRoot = URL(fileURLWithPath: "/tmp/LiteTerm-runner-inspected-cd-\(UUID().uuidString)", isDirectory: true)
+        let shell = LocalShell(rootURL: cdRoot, fileSystem: cdFileSystem)
+        let change = await shell.execute("cd virtual-folder")
+        expect(change.outputLines.isEmpty, "local shell accepts injected directory inspection", &failures)
+        expect(
+            change.directoryChange?.path == cdRoot.appendingPathComponent("virtual-folder").path,
+            "local shell cd uses the injected file access boundary",
+            &failures
+        )
+    }
+
+    @MainActor
+    private static func checkLocalOperationQueue() async -> [String] {
+        var failures: [String] = []
+        let queue = LocalOperationQueue()
+        let gate = RunnerDelayedOperationGate()
+        let recorder = RunnerOperationRecorder()
+
+        expect(queue.enqueue {
+            await recorder.append("old-start")
+            await gate.wait()
+            await recorder.append("old-finish")
+        }, "local operation queue accepts an old-root operation", &failures)
+        expect(queue.enqueue {
+            await recorder.append("old-second")
+        }, "local operation queue accepts a second old-root operation", &failures)
+
+        let transition = Task { @MainActor in
+            await queue.suspendAndDrain()
+            await recorder.append("scope-stop")
+        }
+
+        await gate.waitUntilStarted()
+        while queue.isAccepting {
+            await Task.yield()
+        }
+        expect(!queue.enqueue {
+            await recorder.append("blocked")
+        }, "local operation queue blocks new input during transition", &failures)
+
+        await gate.release()
+        await transition.value
+        let drainedValues = await recorder.values()
+        expect(
+            drainedValues == ["old-start", "old-finish", "old-second", "scope-stop"],
+            "local operation queue drains old work before scope stop",
+            &failures
+        )
+
+        queue.resume()
+        expect(queue.enqueue {
+            await recorder.append("new-root")
+        }, "local operation queue resumes after root replacement", &failures)
+        await queue.suspendAndDrain()
+        let resumedValues = await recorder.values()
+        expect(
+            resumedValues == ["old-start", "old-finish", "old-second", "scope-stop", "new-root"],
+            "local operation queue runs resumed input only after transition",
+            &failures
+        )
+        return failures
+    }
+
     private static func expect(
         _ condition: @autoclosure () -> Bool,
         _ message: String,
@@ -305,6 +454,8 @@ struct LiteTermCoreTestRunner {
 }
 
 private struct RunnerFileSystem: LocalFileSystemAccess {
+    func symbolicLinkDestination(at url: URL) throws -> String? { nil }
+    func isDirectory(at url: URL) throws -> Bool { true }
     func list(at url: URL) throws -> [String] { ["coordinated-entry"] }
     func readText(at url: URL) throws -> String { "" }
     func prepareForEditing(at url: URL) throws {}
@@ -313,4 +464,56 @@ private struct RunnerFileSystem: LocalFileSystemAccess {
     func copyItem(from source: URL, to destination: URL) throws {}
     func moveItem(from source: URL, to destination: URL) throws {}
     func removeFile(at url: URL) throws {}
+}
+
+private struct RunnerInspectingFileSystem: LocalFileSystemAccess {
+    let symbolicLinks: [String: String]
+
+    init(symbolicLinks: [String: String] = [:]) {
+        self.symbolicLinks = symbolicLinks
+    }
+
+    func symbolicLinkDestination(at url: URL) throws -> String? { symbolicLinks[url.path] }
+    func isDirectory(at url: URL) throws -> Bool { true }
+    func list(at url: URL) throws -> [String] { [] }
+    func readText(at url: URL) throws -> String { "" }
+    func prepareForEditing(at url: URL) throws {}
+    func createDirectory(at url: URL) throws {}
+    func touch(at url: URL) throws {}
+    func copyItem(from source: URL, to destination: URL) throws {}
+    func moveItem(from source: URL, to destination: URL) throws {}
+    func removeFile(at url: URL) throws {}
+}
+
+private actor RunnerDelayedOperationGate {
+    private var started = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        started = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func waitUntilStarted() async {
+        while !started {
+            await Task.yield()
+        }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private actor RunnerOperationRecorder {
+    private var recorded: [String] = []
+
+    func append(_ value: String) {
+        recorded.append(value)
+    }
+
+    func values() -> [String] {
+        recorded
+    }
 }
