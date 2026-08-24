@@ -60,3 +60,11 @@ public func XCTAssertNil<T>(
         fatalError("XCTAssertNil failed at \(file):\(line): \(message())")
     }
 }
+
+public func XCTFail(
+    _ message: @autoclosure () -> String = "",
+    file: StaticString = #filePath,
+    line: UInt = #line
+) {
+    fatalError("XCTFail at \(file):\(line): \(message())")
+}
