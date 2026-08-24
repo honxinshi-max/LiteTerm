@@ -37,8 +37,9 @@ struct LiteTermCoreTestRunner {
         checkHostRepository(&failures)
         checkKnownHostPolicy(&failures)
         checkReconnectPolicy(&failures)
+        checkHostCredentialTransactions(&failures)
 
-        finish(failures, passingCheckCount: 24)
+        finish(failures, passingCheckCount: 25)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -535,6 +536,32 @@ struct LiteTermCoreTestRunner {
             expect(partial.hosts.map(\.label) == ["Valid"], "host repository retains valid records beside malformed records", &failures)
             expect(partial.issues.map(\.recordIndex) == [1], "host repository reports the malformed record index", &failures)
 
+            let invalidSchemaVersions = ["true", "1.5", "2"]
+            for invalidVersion in invalidSchemaVersions {
+                let invalidEnvelope = #"{"schemaVersion":\#(invalidVersion),"hosts":[]}"#
+                try Data(invalidEnvelope.utf8).write(to: fileURL, options: .atomic)
+                do {
+                    _ = try repository.load()
+                    failures.append("host repository rejects schema version \(invalidVersion)")
+                } catch HostRepositoryError.corruptEnvelope {
+                    // Expected.
+                } catch {
+                    failures.append("host repository classifies schema version \(invalidVersion) as corrupt")
+                }
+            }
+
+            let unknownFieldsJSON = """
+            {"schemaVersion":1,"hosts":[
+              {"id":"11111111-1111-1111-1111-111111111111","label":"Valid","hostname":"server.example","port":22,"username":"alice","authenticationKind":"password","reconnectPreference":"enabled"},
+              {"id":"22222222-2222-2222-2222-222222222222","label":"Secret","hostname":"secret.example","port":22,"username":"bob","authenticationKind":"password","reconnectPreference":"enabled","trustedFingerprint":"not-a-real-fingerprint"},
+              {"id":"33333333-3333-3333-3333-333333333333","label":"Unknown","hostname":"future.example","port":22,"username":"carol","authenticationKind":"generatedKey","reconnectPreference":"disabled","futureField":true}
+            ]}
+            """
+            try Data(unknownFieldsJSON.utf8).write(to: fileURL, options: .atomic)
+            let whitelisted = try repository.load()
+            expect(whitelisted.hosts.map(\.label) == ["Valid"], "host repository skips secret-bearing and unknown-key records", &failures)
+            expect(whitelisted.issues.map(\.recordIndex) == [1, 2], "host repository reports every non-whitelisted record", &failures)
+
             let corrupt = Data(#"{"schemaVersion":1,"hosts":["#.utf8)
             try corrupt.write(to: fileURL, options: .atomic)
             do {
@@ -563,7 +590,7 @@ struct LiteTermCoreTestRunner {
             &failures
         )
         expect(
-            KnownHostPolicy.evaluate(savedFingerprint: " SHA256:\(fingerprint)= ", presentedFingerprint: "sha256:\(fingerprint)") == .trusted,
+            KnownHostPolicy.evaluate(savedFingerprint: " SHA256: \(fingerprint)= ", presentedFingerprint: "sha256:\(fingerprint)") == .trusted,
             "known-host policy normalizes prefix case and optional Base64 padding",
             &failures
         )
@@ -576,6 +603,27 @@ struct LiteTermCoreTestRunner {
         expect(
             KnownHostPolicy.evaluate(savedFingerprint: "SHA256:\(fingerprint)", presentedFingerprint: "SHA256:BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") == .mismatch,
             "known-host policy hard-fails a changed host key",
+            &failures
+        )
+        expect(
+            KnownHostPolicy.evaluate(savedFingerprint: "not-a-fingerprint", presentedFingerprint: "not-a-fingerprint") == .mismatch,
+            "known-host policy rejects equal arbitrary strings",
+            &failures
+        )
+        expect(
+            KnownHostPolicy.evaluate(savedFingerprint: nil, presentedFingerprint: "SHA256:not-base64") == .mismatch,
+            "known-host policy validates a presented fingerprint before first-use trust",
+            &failures
+        )
+        let shortDigest = Data(repeating: 0, count: 31).base64EncodedString()
+        expect(
+            KnownHostPolicy.evaluate(savedFingerprint: "SHA256:\(shortDigest)", presentedFingerprint: "SHA256:\(shortDigest)") == .mismatch,
+            "known-host policy requires exactly 32 decoded digest bytes",
+            &failures
+        )
+        expect(
+            KnownHostPolicy.evaluate(savedFingerprint: "SHA256:\(fingerprint)==", presentedFingerprint: "SHA256:\(fingerprint)==") == .mismatch,
+            "known-host policy rejects non-canonical padding",
             &failures
         )
     }
@@ -615,6 +663,110 @@ struct LiteTermCoreTestRunner {
             enabled.nextDelay(afterAttempt: -1, failure: .transportLoss, sceneIsActive: true) == nil,
             "reconnect policy rejects a negative attempt",
             &failures
+        )
+    }
+
+    private static func checkHostCredentialTransactions(_ failures: inout [String]) {
+        do {
+            let newPasswordHost = try runnerHost(authenticationKind: .password)
+            let passwordMetadata = RunnerHostMetadataStore()
+            let passwordSecrets = RunnerHostSecretStore()
+            passwordSecrets.failingSetKinds = [.password]
+            let passwordCoordinator = HostCredentialCoordinator(
+                metadata: passwordMetadata,
+                secrets: passwordSecrets
+            )
+            let passwordFailure = passwordCoordinator.upsert(
+                newPasswordHost,
+                password: Data("credential".utf8),
+                in: []
+            )
+            expect(passwordFailure.hosts == [newPasswordHost], "credential password failure keeps the new host visible", &failures)
+            expect(passwordMetadata.hosts == [newPasswordHost], "credential password failure persists visible metadata", &failures)
+            expect(passwordFailure.credentialStates[newPasswordHost.id] == .repairRequired, "credential password failure marks repair required", &failures)
+            expect(passwordFailure.failure == .secretMutation(.password), "credential password failure reports its secret kind", &failures)
+            expect(passwordSecrets.hostIDsWithValues.isSubset(of: Set(passwordFailure.hosts.map(\.id))), "credential password failure creates no secret-only UUID", &failures)
+            expect(passwordCoordinator.inspect([newPasswordHost])[newPasswordHost.id] != .ready, "credential password failure remains non-healthy after restart inspection", &failures)
+            passwordSecrets.failingSetKinds = []
+            let passwordRetry = passwordCoordinator.upsert(newPasswordHost, password: Data("credential".utf8), in: passwordFailure.hosts)
+            expect(passwordRetry.failure == nil && passwordRetry.credentialStates[newPasswordHost.id] == .ready, "credential password failure can be retried to ready", &failures)
+
+            let switchingID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
+            let generatedHost = try runnerHost(id: switchingID, authenticationKind: .generatedKey)
+            let passwordHost = try runnerHost(id: switchingID, authenticationKind: .password)
+            let keyMetadata = RunnerHostMetadataStore(hosts: [generatedHost])
+            let keySecrets = RunnerHostSecretStore()
+            keySecrets.seed(Data("generated-key".utf8), for: switchingID, kind: .privateKey)
+            keySecrets.failingDeleteKinds = [.privateKey]
+            let keyCoordinator = HostCredentialCoordinator(metadata: keyMetadata, secrets: keySecrets)
+            let keyFailure = keyCoordinator.upsert(passwordHost, password: Data("credential".utf8), in: [generatedHost])
+            expect(keyFailure.hosts == [passwordHost], "private-key cleanup failure keeps edited metadata visible", &failures)
+            expect(keyFailure.credentialStates[switchingID] == .repairRequired, "private-key cleanup failure marks repair required", &failures)
+            expect(keyFailure.failure == .secretMutation(.privateKey), "private-key cleanup failure identifies the failing kind", &failures)
+            expect(keySecrets.hostIDsWithValues.isSubset(of: Set(keyFailure.hosts.map(\.id))), "private-key cleanup failure creates no secret-only UUID", &failures)
+
+            for failingKind in HostSecretKind.allCases {
+                let host = try runnerHost(authenticationKind: .password)
+                let metadata = RunnerHostMetadataStore(hosts: [host])
+                let secrets = RunnerHostSecretStore()
+                for kind in HostSecretKind.allCases {
+                    secrets.seed(Data("fixture-\(kind.rawValue)".utf8), for: host.id, kind: kind)
+                }
+                secrets.failingDeleteKinds = [failingKind]
+                let coordinator = HostCredentialCoordinator(metadata: metadata, secrets: secrets)
+                let failed = coordinator.delete(host, from: [host])
+                expect(failed.hosts == [host] && metadata.hosts == [host], "delete failure for \(failingKind) keeps host visible", &failures)
+                expect(failed.failure == .secretDeletion(failingKind), "delete failure identifies \(failingKind)", &failures)
+                expect(failed.credentialStates[host.id] == .repairRequired, "delete failure for \(failingKind) marks repair required", &failures)
+                expect(secrets.hostIDsWithValues.isSubset(of: Set(failed.hosts.map(\.id))), "delete failure for \(failingKind) creates no orphan", &failures)
+
+                secrets.failingDeleteKinds = []
+                let retried = coordinator.delete(host, from: failed.hosts)
+                expect(retried.hosts.isEmpty && metadata.hosts.isEmpty, "delete retry after \(failingKind) removes metadata", &failures)
+                expect(secrets.hostIDsWithValues.isEmpty, "delete retry after \(failingKind) removes every secret", &failures)
+            }
+
+            let saveFailureHost = try runnerHost(authenticationKind: .password)
+            let upsertMetadata = RunnerHostMetadataStore()
+            upsertMetadata.saveShouldFail = true
+            let upsertSecrets = RunnerHostSecretStore()
+            let upsertCoordinator = HostCredentialCoordinator(metadata: upsertMetadata, secrets: upsertSecrets)
+            let upsertFailure = upsertCoordinator.upsert(saveFailureHost, password: Data("credential".utf8), in: [])
+            expect(upsertFailure.hosts.isEmpty, "upsert metadata failure keeps the prior visible list", &failures)
+            expect(upsertFailure.failure == .metadataSave, "upsert metadata failure reports metadata boundary", &failures)
+            expect(upsertSecrets.mutationCount == 0 && upsertSecrets.hostIDsWithValues.isEmpty, "upsert metadata failure creates no secret-only UUID", &failures)
+
+            let deleteMetadata = RunnerHostMetadataStore(hosts: [saveFailureHost])
+            deleteMetadata.saveShouldFail = true
+            let deleteSecrets = RunnerHostSecretStore()
+            deleteSecrets.seed(Data("credential".utf8), for: saveFailureHost.id, kind: .password)
+            let deleteCoordinator = HostCredentialCoordinator(metadata: deleteMetadata, secrets: deleteSecrets)
+            let deleteFailure = deleteCoordinator.delete(saveFailureHost, from: [saveFailureHost])
+            expect(deleteFailure.hosts == [saveFailureHost] && deleteMetadata.hosts == [saveFailureHost], "delete metadata failure keeps host visible", &failures)
+            expect(deleteFailure.failure == .metadataSave, "delete metadata failure reports metadata boundary", &failures)
+            expect(deleteFailure.credentialStates[saveFailureHost.id] == .repairRequired, "delete metadata failure marks credential repair", &failures)
+            expect(deleteSecrets.hostIDsWithValues.isEmpty, "delete metadata failure leaves no secret orphan", &failures)
+            expect(deleteCoordinator.inspect(deleteMetadata.hosts)[saveFailureHost.id] != .ready, "delete metadata failure remains non-healthy after restart inspection", &failures)
+            deleteMetadata.saveShouldFail = false
+            let deleteRetry = deleteCoordinator.delete(saveFailureHost, from: deleteFailure.hosts)
+            expect(deleteRetry.failure == nil && deleteRetry.hosts.isEmpty && deleteMetadata.hosts.isEmpty, "delete metadata failure can be retried to completion", &failures)
+        } catch {
+            failures.append("host credential transaction runner completes: \(error)")
+        }
+    }
+
+    private static func runnerHost(
+        id: UUID = UUID(),
+        authenticationKind: SSHAuthenticationKind
+    ) throws -> SSHHost {
+        try SSHHost(
+            id: id,
+            label: "Primary",
+            hostname: "server.example",
+            port: 22,
+            username: "alice",
+            authenticationKind: authenticationKind,
+            reconnectPreference: .enabled
         )
     }
 
@@ -700,5 +852,65 @@ private actor RunnerOperationRecorder {
 
     func values() -> [String] {
         recorded
+    }
+}
+
+private enum RunnerHostStoreFailure: Error {
+    case injected
+}
+
+private final class RunnerHostMetadataStore: HostMetadataStoring {
+    var hosts: [SSHHost]
+    var saveShouldFail = false
+
+    init(hosts: [SSHHost] = []) {
+        self.hosts = hosts
+    }
+
+    func save(_ hosts: [SSHHost]) throws {
+        guard !saveShouldFail else {
+            throw RunnerHostStoreFailure.injected
+        }
+        self.hosts = hosts
+    }
+}
+
+private final class RunnerHostSecretStore: HostSecretStoring {
+    private struct Key: Hashable {
+        let hostID: UUID
+        let kind: HostSecretKind
+    }
+
+    var failingSetKinds: Set<HostSecretKind> = []
+    var failingDeleteKinds: Set<HostSecretKind> = []
+    private(set) var mutationCount = 0
+    private var values: [Key: Data] = [:]
+
+    var hostIDsWithValues: Set<UUID> {
+        Set(values.keys.map(\.hostID))
+    }
+
+    func seed(_ data: Data, for hostID: UUID, kind: HostSecretKind) {
+        values[Key(hostID: hostID, kind: kind)] = data
+    }
+
+    func set(_ data: Data, for hostID: UUID, kind: HostSecretKind) throws {
+        mutationCount += 1
+        guard !failingSetKinds.contains(kind) else {
+            throw RunnerHostStoreFailure.injected
+        }
+        values[Key(hostID: hostID, kind: kind)] = data
+    }
+
+    func data(for hostID: UUID, kind: HostSecretKind) throws -> Data? {
+        values[Key(hostID: hostID, kind: kind)]
+    }
+
+    func delete(for hostID: UUID, kind: HostSecretKind) throws {
+        mutationCount += 1
+        guard !failingDeleteKinds.contains(kind) else {
+            throw RunnerHostStoreFailure.injected
+        }
+        values.removeValue(forKey: Key(hostID: hostID, kind: kind))
     }
 }

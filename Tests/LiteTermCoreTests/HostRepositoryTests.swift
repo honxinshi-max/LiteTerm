@@ -97,6 +97,67 @@ final class HostRepositoryTests: XCTestCase {
         XCTAssertEqual(unchangedData, corruptData)
     }
 
+    func testBooleanFractionalAndWrongIntegerSchemaVersionsAreCorrupt() throws {
+        for invalidVersion in ["true", "1.5", "2"] {
+            let fileURL = temporaryRepositoryURL()
+            let json = #"{"schemaVersion":\#(invalidVersion),"hosts":[]}"#
+            try Data(json.utf8).write(to: fileURL, options: .atomic)
+
+            do {
+                _ = try HostRepository(fileURL: fileURL).load()
+                XCTFail("Expected corrupt envelope for schema version \(invalidVersion)")
+            } catch let error as HostRepositoryError {
+                XCTAssertEqual(error, .corruptEnvelope)
+            }
+        }
+    }
+
+    func testSecretBearingAndUnknownKeyRecordsAreSkipped() throws {
+        let fileURL = temporaryRepositoryURL()
+        let json = """
+        {
+          "schemaVersion": 1,
+          "hosts": [
+            {
+              "id": "11111111-1111-1111-1111-111111111111",
+              "label": "Primary",
+              "hostname": "server.example",
+              "port": 22,
+              "username": "alice",
+              "authenticationKind": "password",
+              "reconnectPreference": "enabled"
+            },
+            {
+              "id": "22222222-2222-2222-2222-222222222222",
+              "label": "Secret bearing",
+              "hostname": "secret.example",
+              "port": 22,
+              "username": "bob",
+              "authenticationKind": "password",
+              "reconnectPreference": "enabled",
+              "privateKey": "not-a-real-key"
+            },
+            {
+              "id": "33333333-3333-3333-3333-333333333333",
+              "label": "Unknown field",
+              "hostname": "future.example",
+              "port": 22,
+              "username": "carol",
+              "authenticationKind": "generatedKey",
+              "reconnectPreference": "disabled",
+              "futureField": true
+            }
+          ]
+        }
+        """
+        try Data(json.utf8).write(to: fileURL, options: .atomic)
+
+        let snapshot = try HostRepository(fileURL: fileURL).load()
+
+        XCTAssertEqual(snapshot.hosts.map(\.label), ["Primary"])
+        XCTAssertEqual(snapshot.issues.map(\.recordIndex), [1, 2])
+    }
+
     func testHostRejectsBlankLabel() throws {
         assertValidationError(.emptyLabel) {
             _ = try makeHost(label: " \n ")

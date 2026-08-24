@@ -33,7 +33,10 @@ struct HostListScreen: View {
                                 Button {
                                     editedHost = host
                                 } label: {
-                                    HostRow(host: host)
+                                    HostRow(
+                                        host: host,
+                                        credentialState: store.credentialStates[host.id]
+                                    )
                                 }
                                 .buttonStyle(.plain)
                                 .swipeActions {
@@ -105,6 +108,7 @@ struct HostListScreen: View {
 
 private struct HostRow: View {
     let host: SSHHost
+    let credentialState: HostCredentialState?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -116,6 +120,15 @@ private struct HostRow: View {
             Text(host.authenticationKind == .password ? "Password" : "LiteTerm Ed25519 key")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if credentialState == .setupRequired {
+                Label("Credential setup required", systemImage: "key")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            } else if credentialState == .repairRequired {
+                Label("Credential repair required", systemImage: "exclamationmark.shield")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())

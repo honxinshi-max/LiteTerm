@@ -5,6 +5,7 @@ import LiteTermCore
 enum HostStoreError: Error, LocalizedError {
     case passwordRequired
     case repositoryUnavailable
+    case credentialTransactionFailed
 
     var errorDescription: String? {
         switch self {
@@ -12,6 +13,8 @@ enum HostStoreError: Error, LocalizedError {
             return "Enter a password for this host."
         case .repositoryUnavailable:
             return "Host metadata cannot be changed until the damaged hosts file is repaired."
+        case .credentialTransactionFailed:
+            return "The host remains visible, but its credential change needs repair. Retry the operation."
         }
     }
 }
@@ -20,10 +23,12 @@ enum HostStoreError: Error, LocalizedError {
 final class HostStore: ObservableObject {
     @Published private(set) var hosts: [SSHHost] = []
     @Published private(set) var loadIssues: [HostRecordIssue] = []
+    @Published private(set) var credentialStates: [UUID: HostCredentialState] = [:]
     @Published private(set) var errorMessage: String?
 
     private let repository: HostRepository
-    private let keychain: KeychainStore
+    private let secrets: any HostSecretStoring
+    private let credentialCoordinator: HostCredentialCoordinator
     private var repositoryAllowsWrites = true
 
     convenience init() {
@@ -34,12 +39,13 @@ final class HostStore: ObservableObject {
         let fileURL = baseURL
             .appendingPathComponent("LiteTerm", isDirectory: true)
             .appendingPathComponent("hosts.json")
-        self.init(repository: HostRepository(fileURL: fileURL), keychain: KeychainStore())
+        self.init(repository: HostRepository(fileURL: fileURL), secrets: KeychainStore())
     }
 
-    init(repository: HostRepository, keychain: KeychainStore) {
+    init(repository: HostRepository, secrets: any HostSecretStoring) {
         self.repository = repository
-        self.keychain = keychain
+        self.secrets = secrets
+        credentialCoordinator = HostCredentialCoordinator(metadata: repository, secrets: secrets)
         reload()
     }
 
@@ -48,6 +54,7 @@ final class HostStore: ObservableObject {
             let snapshot = try repository.load()
             hosts = snapshot.hosts
             loadIssues = snapshot.issues
+            credentialStates = credentialCoordinator.inspect(snapshot.hosts)
             repositoryAllowsWrites = true
             errorMessage = snapshot.issues.isEmpty
                 ? nil
@@ -66,37 +73,25 @@ final class HostStore: ObservableObject {
         let existingIndex = hosts.firstIndex { $0.id == host.id }
         if host.authenticationKind == .password, password?.isEmpty != false {
             guard existingIndex != nil,
-                  try keychain.data(for: host.id, kind: .password) != nil else {
+                  try secrets.data(for: host.id, kind: .password) != nil else {
                 throw HostStoreError.passwordRequired
             }
         }
 
-        var updatedHosts = hosts
-        if let existingIndex {
-            updatedHosts[existingIndex] = host
-        } else {
-            updatedHosts.append(host)
+        let outcome = credentialCoordinator.upsert(
+            host,
+            password: password.map { Data($0.utf8) },
+            in: hosts
+        )
+        hosts = outcome.hosts
+        credentialStates = outcome.credentialStates
+        if outcome.failure == nil {
+            loadIssues = []
+            errorMessage = nil
+            return
         }
-        try repository.save(updatedHosts)
-        hosts = updatedHosts
-        loadIssues = []
-
-        do {
-            switch host.authenticationKind {
-            case .password:
-                if let password, !password.isEmpty {
-                    try keychain.set(Data(password.utf8), for: host.id, kind: .password)
-                }
-                try keychain.delete(for: host.id, kind: .privateKey)
-            case .generatedKey:
-                try keychain.delete(for: host.id, kind: .password)
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-            throw error
-        }
-
-        errorMessage = nil
+        errorMessage = HostStoreError.credentialTransactionFailed.localizedDescription
+        throw HostStoreError.credentialTransactionFailed
     }
 
     func delete(_ host: SSHHost) {
@@ -104,24 +99,15 @@ final class HostStore: ObservableObject {
             guard repositoryAllowsWrites else {
                 throw HostStoreError.repositoryUnavailable
             }
-            let updatedHosts = hosts.filter { $0.id != host.id }
-            try repository.save(updatedHosts)
-            hosts = updatedHosts
-            loadIssues = []
-            var firstDeletionError: Error?
-            for kind in HostSecretKind.allCases {
-                do {
-                    try keychain.delete(for: host.id, kind: kind)
-                } catch {
-                    if firstDeletionError == nil {
-                        firstDeletionError = error
-                    }
-                }
+            let outcome = credentialCoordinator.delete(host, from: hosts)
+            hosts = outcome.hosts
+            credentialStates = outcome.credentialStates
+            if outcome.failure == nil {
+                loadIssues = []
+                errorMessage = nil
+            } else {
+                throw HostStoreError.credentialTransactionFailed
             }
-            if let firstDeletionError {
-                throw firstDeletionError
-            }
-            errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
         }

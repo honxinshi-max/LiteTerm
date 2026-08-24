@@ -1,11 +1,6 @@
 import Foundation
+import LiteTermCore
 import Security
-
-enum HostSecretKind: String, CaseIterable {
-    case password
-    case privateKey = "private-key"
-    case trustedFingerprint = "trusted-fingerprint"
-}
 
 enum KeychainStoreError: Error, LocalizedError {
     case unexpectedStatus(OSStatus)
@@ -21,7 +16,7 @@ enum KeychainStoreError: Error, LocalizedError {
     }
 }
 
-final class KeychainStore {
+final class KeychainStore: HostSecretStoring {
     private let service: String
 
     init(service: String = "com.liteterm.app.host-secrets") {

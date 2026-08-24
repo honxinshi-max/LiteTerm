@@ -24,6 +24,15 @@ public struct HostRepositorySnapshot: Equatable, Sendable {
 
 public struct HostRepository: Sendable {
     private static let schemaVersion = 1
+    private static let allowedHostKeys: Set<String> = [
+        "id",
+        "label",
+        "hostname",
+        "port",
+        "username",
+        "authenticationKind",
+        "reconnectPreference"
+    ]
     private let fileURL: URL
 
     public init(fileURL: URL) {
@@ -45,8 +54,7 @@ public struct HostRepository: Sendable {
 
         guard
             let envelope = object as? [String: Any],
-            let schemaVersion = envelope["schemaVersion"] as? NSNumber,
-            schemaVersion.intValue == Self.schemaVersion,
+            Self.isSupportedSchemaVersion(envelope["schemaVersion"]),
             let records = envelope["hosts"] as? [Any]
         else {
             throw HostRepositoryError.corruptEnvelope
@@ -57,7 +65,8 @@ public struct HostRepository: Sendable {
         var issues: [HostRecordIssue] = []
         for (index, record) in records.enumerated() {
             guard
-                record is [String: Any],
+                let recordObject = record as? [String: Any],
+                Set(recordObject.keys) == Self.allowedHostKeys,
                 let recordData = try? JSONSerialization.data(withJSONObject: record),
                 let host = try? decoder.decode(SSHHost.self, from: recordData)
             else {
@@ -68,6 +77,16 @@ public struct HostRepository: Sendable {
         }
 
         return HostRepositorySnapshot(hosts: hosts, issues: issues)
+    }
+
+    private static func isSupportedSchemaVersion(_ value: Any?) -> Bool {
+        guard let number = value as? NSNumber else {
+            return false
+        }
+        guard String(cString: number.objCType) != "c" else {
+            return false
+        }
+        return number.decimalValue == Decimal(schemaVersion)
     }
 
     public func save(_ hosts: [SSHHost]) throws {
