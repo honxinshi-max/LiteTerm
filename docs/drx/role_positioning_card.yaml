@@ -1,0 +1,20 @@
+schema: drx.role_positioning_card.v1
+role: producer
+product: LiteTerm
+target_user: iPad user who performs light local file work and interactive remote CLI work without requiring a hardware keyboard
+target_job: authorize a folder, create/read/edit a file, connect to a saved SSH host, operate the remote shell with touch shortcuts, disconnect, and return to local work
+value_trigger: the complete 14-step V0.1 acceptance flow succeeds in one stable foreground session
+feedback_loop:
+  observe:
+    - launch_rss
+    - local_rss
+    - connected_rss
+    - reconnect_outcome
+    - normalized_connection_failure_category
+    - acceptance_step_result
+  prohibit:
+    - command_text
+    - file_content
+    - password
+    - private_key
+decision_boundary: physical-iPad behavior, App Store acceptance, and resource targets remain unproven until measured

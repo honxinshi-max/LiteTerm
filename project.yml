@@ -1,0 +1,126 @@
+name: LiteTerm
+
+options:
+  deploymentTarget:
+    iOS: "17.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    TARGETED_DEVICE_FAMILY: "2"
+
+packages:
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm.git
+    revision: dd2fb8ac5b861e7bf617c872895e338f38165648
+  SwiftNIOSSH:
+    url: https://github.com/apple/swift-nio-ssh.git
+    revision: 3ec281496f28a3b6581afd946b759e2642f5cd8d
+  SwiftNIOTransportServices:
+    url: https://github.com/apple/swift-nio-transport-services.git
+    revision: 67787bb645a5e67d2edcdfbe48a216cc549222d5
+  SwiftNIO:
+    url: https://github.com/apple/swift-nio.git
+    revision: 0b18836bd8b0162e7e17a995a3fbee20ed8f3b2b
+  SwiftCrypto:
+    url: https://github.com/apple/swift-crypto.git
+    revision: 47d3869a7291f085c1fb9fb1e6d3b97a793f45c6
+
+targets:
+  LiteTermCore:
+    type: framework
+    platform: iOS
+    sources:
+      - path: Sources/LiteTermCore
+        excludes:
+          - Resources/PrivacyInfo.xcprivacy
+      - path: Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "2"
+
+  LiteTerm:
+    type: application
+    platform: iOS
+    sources:
+      - path: LiteTerm
+        excludes:
+          - Resources/PrivacyInfo.xcprivacy
+      - path: LiteTerm/Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
+      - path: THIRD_PARTY_NOTICES.md
+        buildPhase: resources
+    dependencies:
+      - target: LiteTermCore
+      - package: SwiftTerm
+        product: SwiftTerm
+      - package: SwiftNIOSSH
+        product: NIOSSH
+      - package: SwiftNIOTransportServices
+        product: NIOTransportServices
+      - package: SwiftNIO
+        product: NIOCore
+      - package: SwiftNIO
+        product: NIOConcurrencyHelpers
+      - package: SwiftCrypto
+        product: Crypto
+    settings:
+      base:
+        CODE_SIGN_ENTITLEMENTS: LiteTerm/Resources/LiteTerm.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: LiteTerm/Resources/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.liteterm.app
+        TARGETED_DEVICE_FAMILY: "2"
+
+  LiteTermCoreTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests/LiteTermCoreTests
+    dependencies:
+      - target: LiteTermCore
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "2"
+
+  LiteTermSSHTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests/LiteTermSSHTests
+    dependencies:
+      - target: LiteTerm
+      - package: SwiftNIOSSH
+        product: NIOSSH
+      - package: SwiftNIO
+        product: NIOEmbedded
+      - package: SwiftNIO
+        product: NIOConcurrencyHelpers
+      - package: SwiftCrypto
+        product: Crypto
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "2"
+
+  LiteTermUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - LiteTermUITests
+    dependencies:
+      - target: LiteTerm
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "2"
+
+schemes:
+  LiteTerm:
+    build:
+      targets:
+        LiteTerm: all
+    test:
+      targets:
+        - LiteTermCoreTests
+        - LiteTermSSHTests
+        - LiteTermUITests

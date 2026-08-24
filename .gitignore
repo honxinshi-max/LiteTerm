@@ -1,0 +1,10 @@
+.DS_Store
+.superpowers/sdd/
+.build/
+DerivedData/
+build/
+*.xcuserstate
+*.xcscmblueprint
+xcuserdata/
+LiteTerm.xcodeproj/project.xcworkspace/xcuserdata/
+LiteTerm.xcodeproj/xcuserdata/
