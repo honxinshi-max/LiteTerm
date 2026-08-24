@@ -21,6 +21,38 @@ enum CoordinatedFileAccessError: LocalizedError {
     }
 }
 
+protocol LocalDeletionCoordinating: Sendable {
+    func coordinateDeletion(
+        at requestedURL: URL,
+        accessor: (URL) throws -> Void
+    ) throws
+}
+
+private struct FoundationLocalDeletionCoordinator: LocalDeletionCoordinating {
+    func coordinateDeletion(
+        at requestedURL: URL,
+        accessor: (URL) throws -> Void
+    ) throws {
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordinationError: NSError?
+        let result = CoordinationResultBox<Void>()
+        coordinator.coordinate(
+            writingItemAt: requestedURL,
+            options: .forDeleting,
+            error: &coordinationError
+        ) { coordinatedURL in
+            result.value = Result { try accessor(coordinatedURL) }
+        }
+        if let coordinationError {
+            throw coordinationError
+        }
+        guard let value = result.value else {
+            throw CoordinatedFileAccessError.coordinationFailed
+        }
+        try value.get()
+    }
+}
+
 enum CoordinatedFileAccess {
     static let maximumBytes = LocalFileSystem.maximumTextFileBytes
 
@@ -92,10 +124,15 @@ enum CoordinatedFileAccess {
 struct CoordinatedLocalFileSystem: LocalFileSystemAccess {
     private let rootURL: URL
     private let directFileSystem: LocalFileSystem
+    private let deletionCoordinator: any LocalDeletionCoordinating
 
-    init(rootURL: URL) {
+    init(
+        rootURL: URL,
+        deletionCoordinator: any LocalDeletionCoordinating = FoundationLocalDeletionCoordinator()
+    ) {
         self.rootURL = rootURL.standardizedFileURL
         directFileSystem = LocalFileSystem(rootURL: rootURL)
+        self.deletionCoordinator = deletionCoordinator
     }
 
     func symbolicLinkDestination(at url: URL) throws -> String? {
@@ -219,13 +256,13 @@ struct CoordinatedLocalFileSystem: LocalFileSystemAccess {
             partialURL.appendingPathComponent(String(component))
         }
 
-        try coordinateWrite(at: targetURL, options: .forDeleting) { coordinatedTargetURL in
-            let coordinatedRootURL = pathComponents.reduce(coordinatedTargetURL) { partialURL, _ in
-                partialURL.deletingLastPathComponent()
+        let expectedTargetURL = targetURL.standardizedFileURL
+        try deletionCoordinator.coordinateDeletion(at: expectedTargetURL) { coordinatedTargetURL in
+            guard coordinatedTargetURL.standardizedFileURL.path == expectedTargetURL.path else {
+                throw LocalFileSystemError.deletionRequestExpired
             }
-            let coordinatedFileSystem = LocalFileSystem(rootURL: coordinatedRootURL)
-            try coordinatedFileSystem.revalidateAndRemoveFile(
-                rootURL: coordinatedRootURL,
+            try LocalFileSystem(rootURL: rootURL).revalidateAndRemoveFile(
+                rootURL: rootURL,
                 rootRelativePath: rootRelativePath,
                 expectedIdentity: expectedIdentity
             )

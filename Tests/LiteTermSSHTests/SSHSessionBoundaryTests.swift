@@ -194,6 +194,66 @@ final class SSHSessionBoundaryTests: XCTestCase {
         XCTAssertEqual(scheduler.retainedTransitionCount, 0)
     }
 
+    func testCoordinatedDeletionRejectsOutsideRelocationOfSameFileIdentity() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Coordinated-Relocation-\(UUID().uuidString)", isDirectory: true)
+        let root = base.appendingPathComponent("Root", isDirectory: true)
+        let outside = base.appendingPathComponent("Outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let original = root.appendingPathComponent("target.txt")
+        let relocated = outside.appendingPathComponent("target.txt")
+        try Data("same inode".utf8).write(to: original)
+        try FileManager.default.linkItem(at: original, to: relocated)
+        let identity = try LocalFileSystem(rootURL: root).deletionIdentity(at: original)
+        let fileSystem = CoordinatedLocalFileSystem(
+            rootURL: root,
+            deletionCoordinator: RelocatingDeletionCoordinator(callbackURL: relocated)
+        )
+
+        do {
+            try fileSystem.revalidateAndRemoveFile(
+                rootURL: root,
+                rootRelativePath: "target.txt",
+                expectedIdentity: identity
+            )
+            XCTFail("A relocated coordinator callback must expire")
+        } catch LocalFileSystemError.deletionRequestExpired {
+            // Expected.
+        }
+
+        XCTAssertEqual(FileManager.default.fileExists(atPath: original.path), true)
+        XCTAssertEqual(FileManager.default.fileExists(atPath: relocated.path), true)
+    }
+
+    func testCoordinatedDeletionRejectsInRootRenameCallback() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Coordinated-Rename-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let original = root.appendingPathComponent("target.txt")
+        let renamed = root.appendingPathComponent("renamed.txt")
+        try Data("retained".utf8).write(to: original)
+        let identity = try LocalFileSystem(rootURL: root).deletionIdentity(at: original)
+        try FileManager.default.moveItem(at: original, to: renamed)
+        let fileSystem = CoordinatedLocalFileSystem(
+            rootURL: root,
+            deletionCoordinator: RelocatingDeletionCoordinator(callbackURL: renamed)
+        )
+
+        do {
+            try fileSystem.revalidateAndRemoveFile(
+                rootURL: root,
+                rootRelativePath: "target.txt",
+                expectedIdentity: identity
+            )
+            XCTFail("An in-root rename callback must expire")
+        } catch LocalFileSystemError.deletionRequestExpired {
+            // Expected.
+        }
+
+        XCTAssertEqual(FileManager.default.fileExists(atPath: renamed.path), true)
+    }
+
     func testCoordinatorPassesCommandCostAndRejectsBeyondTheBlockedQueueBudget() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("LiteTerm-Queue-Boundary-\(UUID().uuidString)", isDirectory: true)
@@ -264,10 +324,8 @@ final class SSHSessionBoundaryTests: XCTestCase {
         controller.confirmHostTrust()
         await drainMainActor()
         XCTAssertEqual(controller.state, .connected)
-        XCTAssertEqual(
-            try secrets.data(for: host.id, kind: .trustedFingerprint),
-            Data(replacementFingerprint.utf8)
-        )
+        let storedFingerprint = try secrets.data(for: host.id, kind: .trustedFingerprint)
+        XCTAssertEqual(storedFingerprint, Data(replacementFingerprint.utf8))
 
         let loop = EmbeddedEventLoop()
         let trustKind = NIOLockedValueBox<SSHHostTrustKind?>(nil)
@@ -740,6 +798,14 @@ private actor BoundaryOperationGate {
     func release() {
         continuation?.resume()
         continuation = nil
+    }
+}
+
+private struct RelocatingDeletionCoordinator: LocalDeletionCoordinating {
+    let callbackURL: URL
+
+    func coordinateDeletion(at requestedURL: URL, accessor: (URL) throws -> Void) throws {
+        try accessor(callbackURL)
     }
 }
 

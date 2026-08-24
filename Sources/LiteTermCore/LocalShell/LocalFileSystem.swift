@@ -26,6 +26,13 @@ public protocol LocalFileSystemAccess: WorkspacePathInspecting {
     ) throws
 }
 
+public protocol LocalFileReadHandle: Sendable {
+    func read(upToCount count: Int) throws -> Data
+    func close() throws
+}
+
+public typealias LocalFileReadHandleFactory = @Sendable (URL) throws -> any LocalFileReadHandle
+
 public struct PreparedDeletion: Equatable, Sendable {
     public let targetURL: URL
     public let rootRelativePath: String
@@ -74,11 +81,24 @@ public enum LocalFileSystemError: Error, Equatable, Sendable {
 
 public struct LocalFileSystem: LocalFileSystemAccess {
     public static let maximumTextFileBytes = 5 * 1024 * 1024
+    private static let readChunkBytes = 64 * 1024
 
     private let rootURL: URL
+    private let openFileForReading: LocalFileReadHandleFactory
 
     public init(rootURL: URL) {
         self.rootURL = rootURL
+        openFileForReading = { url in
+            try FoundationLocalFileReadHandle(url: url)
+        }
+    }
+
+    public init(
+        rootURL: URL,
+        openFileForReading: @escaping LocalFileReadHandleFactory
+    ) {
+        self.rootURL = rootURL
+        self.openFileForReading = openFileForReading
     }
 
     public func symbolicLinkDestination(at url: URL) throws -> String? {
@@ -106,8 +126,34 @@ public struct LocalFileSystem: LocalFileSystemAccess {
     }
 
     public func readText(at url: URL) throws -> String {
-        try validateTextSize(at: url)
-        let data = try Data(contentsOf: url)
+        let handle = try openFileForReading(url)
+        defer { try? handle.close() }
+
+        var data = Data()
+        data.reserveCapacity(Self.maximumTextFileBytes)
+        while data.count < Self.maximumTextFileBytes {
+            let requestedCount = min(
+                Self.readChunkBytes,
+                Self.maximumTextFileBytes - data.count
+            )
+            let chunk = try handle.read(upToCount: requestedCount)
+            guard chunk.count <= requestedCount else {
+                throw LocalFileSystemError.fileTooLarge
+            }
+            guard !chunk.isEmpty else {
+                return try decodeText(data)
+            }
+            data.append(chunk)
+        }
+
+        let overflowProbe = try handle.read(upToCount: 1)
+        guard overflowProbe.isEmpty else {
+            throw LocalFileSystemError.fileTooLarge
+        }
+        return try decodeText(data)
+    }
+
+    private func decodeText(_ data: Data) throws -> String {
         guard let text = String(data: data, encoding: .utf8) else {
             throw LocalFileSystemError.invalidText
         }
@@ -269,5 +315,21 @@ public struct LocalFileSystem: LocalFileSystemAccess {
         guard size <= Self.maximumTextFileBytes else {
             throw LocalFileSystemError.fileTooLarge
         }
+    }
+}
+
+private final class FoundationLocalFileReadHandle: LocalFileReadHandle, @unchecked Sendable {
+    private let fileHandle: FileHandle
+
+    init(url: URL) throws {
+        fileHandle = try FileHandle(forReadingFrom: url)
+    }
+
+    func read(upToCount count: Int) throws -> Data {
+        try fileHandle.read(upToCount: count) ?? Data()
+    }
+
+    func close() throws {
+        try fileHandle.close()
     }
 }

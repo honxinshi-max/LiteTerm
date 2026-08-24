@@ -264,6 +264,27 @@ final class LocalShellTests: XCTestCase {
         XCTAssertEqual(rejectedEdit.outputLines, ["Error: file exceeds the 5 MiB read/edit limit"])
     }
 
+    func testReadConsumesOnlyLimitPlusProbeByteFromGrowingSourceAndClosesHandle() throws {
+        let root = try makeRoot()
+        let handle = GrowingReadHandle(
+            availableByteCount: LocalFileSystem.maximumTextFileBytes + 64 * 1024
+        )
+        let fileSystem = LocalFileSystem(rootURL: root, openFileForReading: { _ in handle })
+
+        do {
+            _ = try fileSystem.readText(at: root.appendingPathComponent("growing.txt"))
+            XCTFail("A source larger than 5 MiB must be rejected")
+        } catch LocalFileSystemError.fileTooLarge {
+            // Expected.
+        } catch {
+            XCTFail("Expected fileTooLarge, received \(error)")
+        }
+
+        XCTAssertEqual(handle.totalBytesReturned, LocalFileSystem.maximumTextFileBytes + 1)
+        XCTAssertEqual(handle.maximumRequestedCount <= 64 * 1024, true)
+        XCTAssertEqual(handle.isClosed, true)
+    }
+
     private func makeRoot() throws -> URL {
         let root = fileManager.temporaryDirectory
             .appendingPathComponent("LiteTerm-LocalShellTests-\(UUID().uuidString)", isDirectory: true)
@@ -411,4 +432,27 @@ private final class MismatchedPreparedDeletionFileSystem: LocalFileSystemAccess,
         )
     }
     func revalidateAndRemoveFile(rootURL: URL, rootRelativePath: String, expectedIdentity: LocalFileIdentity) throws {}
+}
+
+private final class GrowingReadHandle: LocalFileReadHandle, @unchecked Sendable {
+    private let availableByteCount: Int
+    private(set) var totalBytesReturned = 0
+    private(set) var maximumRequestedCount = 0
+    private(set) var isClosed = false
+
+    init(availableByteCount: Int) {
+        self.availableByteCount = availableByteCount
+    }
+
+    func read(upToCount count: Int) throws -> Data {
+        maximumRequestedCount = max(maximumRequestedCount, count)
+        let byteCount = min(count, availableByteCount - totalBytesReturned)
+        guard byteCount > 0 else { return Data() }
+        totalBytesReturned += byteCount
+        return Data(repeating: 0x61, count: byteCount)
+    }
+
+    func close() throws {
+        isClosed = true
+    }
 }

@@ -32,6 +32,8 @@ for required_path in \
     LiteTerm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved \
     LiteTerm/Resources/Info.plist \
     LiteTerm/Resources/PrivacyInfo.xcprivacy \
+    LiteTerm/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json \
+    LiteTerm/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png \
     Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy \
     THIRD_PARTY_NOTICES.md \
     Tests/LiteTermCoreTests/AcceptanceFlowTests.swift
@@ -43,12 +45,9 @@ pass "required project files exist"
 ./scripts/run-core-tests.sh
 pass "actual LiteTermCore custom runner executed"
 
-if test "${LITETERM_COMPILE_STANDARD_TESTS:-1}" = 1; then
-    swift test
-    pass "standard Swift test targets compile"
-else
-    printf 'SKIP: standard Swift test compilation disabled by LITETERM_COMPILE_STANDARD_TESTS=0\n'
-fi
+swift build
+pass "portable LiteTermCore package builds"
+printf 'OPEN/SKIP: standard XCTest is not enabled in the default Command Line Tools package; use the documented explicit real-XCTest opt-in or the full-Xcode scheme.\n'
 
 /usr/bin/plutil -lint \
     LiteTerm.xcodeproj/project.pbxproj \
@@ -126,6 +125,40 @@ assert(
   core_package_target.fetch("resources") == [{"path" => "Resources/PrivacyInfo.xcprivacy", "rule" => {"process" => {}}}],
   "LiteTermCore Swift package privacy resource declaration changed"
 )
+default_package_target_names = package.fetch("targets").map { |target| target.fetch("name") }
+assert(!default_package_target_names.include?("XCTest"), "default package must not contain a fake XCTest target")
+assert(!default_package_target_names.include?("LiteTermCoreTests"), "default package must not expose XCTest without explicit opt-in")
+
+opt_in_package_json, opt_in_package_status = Open3.capture2(
+  {"LITETERM_ENABLE_SWIFTPM_XCTESTS" => "1"},
+  "swift", "package", "dump-package"
+)
+assert(opt_in_package_status.success?, "opt-in Swift package model dump failed")
+opt_in_package = JSON.parse(opt_in_package_json)
+opt_in_target_names = opt_in_package.fetch("targets").map { |target| target.fetch("name") }
+assert(opt_in_target_names.include?("LiteTermCoreTests"), "explicit real-XCTest opt-in target is missing")
+assert(!opt_in_target_names.include?("XCTest"), "opt-in package must use the toolchain XCTest rather than a fake target")
+
+app_icon_contents = JSON.parse(File.read("LiteTerm/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json"))
+assert(
+  app_icon_contents == {
+    "images" => [{
+      "filename" => "AppIcon-1024.png",
+      "idiom" => "universal",
+      "platform" => "ios",
+      "size" => "1024x1024"
+    }],
+    "info" => {"author" => "xcode", "version" => 1}
+  },
+  "AppIcon Contents.json must map the single iOS 1024 image"
+)
+app_icon_png = File.binread("LiteTerm/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png")
+assert(app_icon_png.byteslice(0, 8) == "\x89PNG\r\n\x1A\n".b, "AppIcon image must have a PNG signature")
+assert(app_icon_png.byteslice(12, 4) == "IHDR", "AppIcon PNG must begin with IHDR")
+width, height = app_icon_png.byteslice(16, 8).unpack("NN")
+assert([width, height] == [1024, 1024], "AppIcon PNG dimensions must be 1024x1024")
+assert(![4, 6].include?(app_icon_png.getbyte(25)), "AppIcon PNG must not contain an alpha channel")
+assert(app_icon_png.bytesize.between?(1024, 1_048_576), "AppIcon PNG byte size is unreasonable")
 
 resolved = JSON.parse(File.read("LiteTerm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"))
 expected_resolved = {
@@ -213,12 +246,22 @@ assert(app_privacy_refs.length == 1, "app target must contain exactly one privac
 assert(core_privacy_refs.length == 1, "Core target must contain exactly one privacy manifest resource")
 assert(app_privacy_refs.first.first != core_privacy_refs.first.first, "app and Core targets must use distinct privacy manifest file references")
 assert(app_resource_refs.any? { |_id, path| path == "THIRD_PARTY_NOTICES.md" }, "third-party notices are not in LiteTerm resources")
+assert(app_resource_refs.any? { |_id, path| path == "Assets.xcassets" }, "app asset catalog is not in LiteTerm resources")
+_app_target_id, app_target = objects.find do |_id, object|
+  object["isa"] == "PBXNativeTarget" && object["name"] == "LiteTerm"
+end
+app_configuration_ids = objects.fetch(app_target.fetch("buildConfigurationList")).fetch("buildConfigurations")
+app_configurations = app_configuration_ids.map { |id| objects.fetch(id).fetch("buildSettings") }
+assert(
+  app_configurations.all? { |settings| settings["ASSETCATALOG_COMPILER_APPICON_NAME"] == "AppIcon" },
+  "all LiteTerm build configurations must select the AppIcon set"
+)
 target_names = objects.values.select { |object| object["isa"] == "PBXNativeTarget" }.map { |object| object["name"] }
 %w[LiteTermCoreTests LiteTermSSHTests LiteTermUITests].each do |name|
   assert(target_names.include?(name), "#{name} generated target missing")
 end
 RUBY
-pass "project model, pins, targets, distinct privacy resources, orientations, local-network copy, and privacy declarations match"
+pass "project model, pins, targets, AppIcon, distinct privacy resources, orientations, local-network copy, and privacy declarations match"
 
 forbidden_pattern='SFTP|port[[:space:]_-]*forward|Docker|VirtualMachine|PythonKit|JavaScriptCore|NodeRuntime|background[[:space:]_-]*keepalive|UIBackgroundModes|NSBonjourServices|CKContainer|CloudKit|NSTask([^[:alnum:]_]|$)|dlopen[[:space:]]*\('
 process_pattern='(^|[^[:alnum:]_])(Foundation[.])?Process[[:space:]]*\('

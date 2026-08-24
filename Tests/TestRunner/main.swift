@@ -41,6 +41,7 @@ struct LiteTermCoreTestRunner {
         checkWorkspaceVirtualPaths(&failures)
         await checkLocalShellFileOperations(&failures)
         await checkLocalShellEditorClearAndSizeLimit(&failures)
+        checkBoundedLocalFileRead(&failures)
         await checkLocalShellDirectoryEditAndEmptyCat(&failures)
         await checkInjectedFileAccessBoundary(&failures)
         checkRemoteOutputSanitization(&failures)
@@ -56,7 +57,7 @@ struct LiteTermCoreTestRunner {
         checkSSHConnectionStateAndReconnect(&failures)
         await checkAcceptanceFlow(&failures)
 
-        finish(failures, passingCheckCount: 29)
+        finish(failures, passingCheckCount: 30)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -403,6 +404,34 @@ struct LiteTermCoreTestRunner {
         } catch {
             failures.append("local shell directory-edit runner fixture can be created: \(error)")
         }
+    }
+
+    private static func checkBoundedLocalFileRead(_ failures: inout [String]) {
+        let root = URL(fileURLWithPath: "/tmp/LiteTerm-bounded-read-\(UUID().uuidString)", isDirectory: true)
+        let handle = RunnerGrowingReadHandle(
+            availableByteCount: LocalFileSystem.maximumTextFileBytes + 64 * 1024
+        )
+        let fileSystem = LocalFileSystem(
+            rootURL: root,
+            openFileForReading: { _ in handle }
+        )
+
+        do {
+            _ = try fileSystem.readText(at: root.appendingPathComponent("growing.txt"))
+            failures.append("bounded Local read rejects a source that grows past 5 MiB")
+        } catch LocalFileSystemError.fileTooLarge {
+            // Expected.
+        } catch {
+            failures.append("bounded Local read classifies an oversized source as fileTooLarge")
+        }
+
+        expect(
+            handle.totalBytesReturned == LocalFileSystem.maximumTextFileBytes + 1,
+            "bounded Local read consumes only the 5 MiB cap plus one probe byte",
+            &failures
+        )
+        expect(handle.maximumRequestedCount <= 64 * 1024, "bounded Local read uses bounded chunks", &failures)
+        expect(handle.isClosed, "bounded Local read closes its handle after rejection", &failures)
     }
 
     private static func checkInjectedFileAccessBoundary(_ failures: inout [String]) async {
@@ -1667,6 +1696,29 @@ private actor RunnerDelayedOperationGate {
     func release() {
         continuation?.resume()
         continuation = nil
+    }
+}
+
+private final class RunnerGrowingReadHandle: LocalFileReadHandle, @unchecked Sendable {
+    private let availableByteCount: Int
+    private(set) var totalBytesReturned = 0
+    private(set) var maximumRequestedCount = 0
+    private(set) var isClosed = false
+
+    init(availableByteCount: Int) {
+        self.availableByteCount = availableByteCount
+    }
+
+    func read(upToCount count: Int) throws -> Data {
+        maximumRequestedCount = max(maximumRequestedCount, count)
+        let byteCount = min(count, availableByteCount - totalBytesReturned)
+        guard byteCount > 0 else { return Data() }
+        totalBytesReturned += byteCount
+        return Data(repeating: 0x61, count: byteCount)
+    }
+
+    func close() throws {
+        isClosed = true
     }
 }
 
