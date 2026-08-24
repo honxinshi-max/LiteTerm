@@ -13,11 +13,13 @@ final class AppModel: ObservableObject {
         didSet { terminalSession.setMode(mode) }
     }
     @Published var isShowingFolderPicker = false
+    @Published var isShowingHosts = false
     @Published var editorDocument: EditorDocument?
     @Published var authorizationErrorMessage: String?
     @Published private(set) var activeWorkspaceName: String
 
     let folderAuthorizationStore: FolderAuthorizationStore
+    let hostStore: HostStore
     let terminalSession: TerminalSessionCoordinator
     private let workspaceTransitionQueue = LocalOperationQueue()
 
@@ -27,6 +29,7 @@ final class AppModel: ObservableObject {
     init() {
         let authorizationStore = FolderAuthorizationStore()
         folderAuthorizationStore = authorizationStore
+        hostStore = HostStore()
 
         var initialRoot = authorizationStore.documentsURL
         var initialError: String?
@@ -55,6 +58,10 @@ final class AppModel: ObservableObject {
             editorDocument = EditorDocument(url: testURL)
         }
         #endif
+
+        onHostsRequested = { [weak self] in
+            self?.isShowingHosts = true
+        }
     }
 
     func chooseExternalFolder() {

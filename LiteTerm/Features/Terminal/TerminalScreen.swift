@@ -26,6 +26,9 @@ struct TerminalScreen: View {
             )
             .ignoresSafeArea()
         }
+        .sheet(isPresented: $model.isShowingHosts) {
+            HostListScreen(store: model.hostStore)
+        }
         .sheet(item: $model.editorDocument) { document in
             TextFileEditor(url: document.url) { _ in
                 model.editorDocument = nil

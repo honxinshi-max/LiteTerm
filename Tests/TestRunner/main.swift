@@ -34,8 +34,11 @@ struct LiteTermCoreTestRunner {
         checkLocalTerminalInputOrdering(&failures)
         await checkCoordinatedPathInspection(&failures)
         failures.append(contentsOf: await checkLocalOperationQueue())
+        checkHostRepository(&failures)
+        checkKnownHostPolicy(&failures)
+        checkReconnectPolicy(&failures)
 
-        finish(failures, passingCheckCount: 21)
+        finish(failures, passingCheckCount: 24)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -487,6 +490,132 @@ struct LiteTermCoreTestRunner {
             &failures
         )
         return failures
+    }
+
+    private static func checkHostRepository(_ failures: inout [String]) {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-hosts-\(UUID().uuidString)", isDirectory: true)
+        let fileURL = directoryURL.appendingPathComponent("hosts.json")
+        do {
+            let first = try SSHHost(
+                id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+                label: "Zulu",
+                hostname: "server.example",
+                port: 22,
+                username: "alice",
+                authenticationKind: .password,
+                reconnectPreference: .enabled
+            )
+            let second = try SSHHost(
+                id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
+                label: "Alpha",
+                hostname: "backup.example",
+                port: 2222,
+                username: "bob",
+                authenticationKind: .generatedKey,
+                reconnectPreference: .disabled
+            )
+            let repository = HostRepository(fileURL: fileURL)
+            try repository.save([first, second])
+            let snapshot = try repository.load()
+            expect(snapshot.hosts == [first, second], "host repository preserves stable metadata order", &failures)
+            expect(snapshot.issues.isEmpty, "host repository reports no issues for valid metadata", &failures)
+
+            let encoded = String(decoding: try Data(contentsOf: fileURL), as: UTF8.self)
+            expect(!encoded.contains(#""password":"#) && !encoded.contains(#""privateKey":"#) && !encoded.contains(#""fingerprint":"#), "host metadata JSON contains no secret fields", &failures)
+
+            let malformedJSON = """
+            {"schemaVersion":1,"hosts":[
+              {"id":"11111111-1111-1111-1111-111111111111","label":"Valid","hostname":"server.example","port":22,"username":"alice","authenticationKind":"password","reconnectPreference":"enabled"},
+              {"id":"22222222-2222-2222-2222-222222222222","label":"Broken","hostname":"","port":22,"username":"bob","authenticationKind":"password","reconnectPreference":"enabled"}
+            ]}
+            """
+            try Data(malformedJSON.utf8).write(to: fileURL, options: .atomic)
+            let partial = try repository.load()
+            expect(partial.hosts.map(\.label) == ["Valid"], "host repository retains valid records beside malformed records", &failures)
+            expect(partial.issues.map(\.recordIndex) == [1], "host repository reports the malformed record index", &failures)
+
+            let corrupt = Data(#"{"schemaVersion":1,"hosts":["#.utf8)
+            try corrupt.write(to: fileURL, options: .atomic)
+            do {
+                _ = try repository.load()
+                failures.append("host repository rejects a wholly corrupt envelope")
+            } catch HostRepositoryError.corruptEnvelope {
+                expect((try? Data(contentsOf: fileURL)) == corrupt, "host repository leaves a corrupt envelope unchanged", &failures)
+            } catch {
+                failures.append("host repository classifies a wholly corrupt envelope")
+            }
+        } catch {
+            failures.append("host repository runner completes: \(error)")
+        }
+    }
+
+    private static func checkKnownHostPolicy(_ failures: inout [String]) {
+        let fingerprint = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        expect(
+            KnownHostPolicy.evaluate(savedFingerprint: nil, presentedFingerprint: "SHA256:\(fingerprint)") == .needsTrust,
+            "known-host policy requires explicit first-use trust",
+            &failures
+        )
+        expect(
+            KnownHostPolicy.evaluate(savedFingerprint: "SHA256:\(fingerprint)", presentedFingerprint: "SHA256:\(fingerprint)") == .trusted,
+            "known-host policy trusts an exact fingerprint",
+            &failures
+        )
+        expect(
+            KnownHostPolicy.evaluate(savedFingerprint: " SHA256:\(fingerprint)= ", presentedFingerprint: "sha256:\(fingerprint)") == .trusted,
+            "known-host policy normalizes prefix case and optional Base64 padding",
+            &failures
+        )
+        let changedCase = "a" + fingerprint.dropFirst()
+        expect(
+            KnownHostPolicy.evaluate(savedFingerprint: "SHA256:\(fingerprint)", presentedFingerprint: "SHA256:\(changedCase)") == .mismatch,
+            "known-host policy keeps fingerprint payload comparison case-sensitive",
+            &failures
+        )
+        expect(
+            KnownHostPolicy.evaluate(savedFingerprint: "SHA256:\(fingerprint)", presentedFingerprint: "SHA256:BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") == .mismatch,
+            "known-host policy hard-fails a changed host key",
+            &failures
+        )
+    }
+
+    private static func checkReconnectPolicy(_ failures: inout [String]) {
+        let enabled = ReconnectPolicy(isEnabled: true)
+        expect(
+            (0...3).map {
+                enabled.nextDelay(afterAttempt: $0, failure: .transportLoss, sceneIsActive: true)
+            } == [.seconds(1), .seconds(2), .seconds(4), nil],
+            "reconnect policy uses only 1, 2, and 4 second transport-loss delays",
+            &failures
+        )
+        expect(
+            enabled.nextDelay(afterAttempt: 0, failure: .transportLoss, sceneIsActive: false) == nil,
+            "reconnect policy does not retry while the scene is inactive",
+            &failures
+        )
+        expect(
+            ReconnectPolicy(isEnabled: false).nextDelay(afterAttempt: 0, failure: .transportLoss, sceneIsActive: true) == nil,
+            "reconnect policy honors a disabled host preference",
+            &failures
+        )
+        let terminalFailures: [SSHConnectionFailure] = [
+            .authenticationRejected,
+            .hostKeyMismatch,
+            .manualDisconnect
+        ]
+        expect(
+            terminalFailures.allSatisfy {
+                enabled.nextDelay(afterAttempt: 0, failure: $0, sceneIsActive: true) == nil
+            },
+            "reconnect policy does not retry terminal or manual failures",
+            &failures
+        )
+        expect(
+            enabled.nextDelay(afterAttempt: -1, failure: .transportLoss, sceneIsActive: true) == nil,
+            "reconnect policy rejects a negative attempt",
+            &failures
+        )
     }
 
     private static func expect(
