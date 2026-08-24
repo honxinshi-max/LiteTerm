@@ -56,7 +56,10 @@ private struct FoundationLocalDeletionCoordinator: LocalDeletionCoordinating {
 enum CoordinatedFileAccess {
     static let maximumBytes = LocalFileSystem.maximumTextFileBytes
 
-    static func readText(from url: URL) throws -> String {
+    static func readText(
+        from url: URL,
+        openFileForReading: LocalFileReadHandleFactory? = nil
+    ) throws -> String {
         let coordinator = NSFileCoordinator(filePresenter: nil)
         var coordinationError: NSError?
         var result: Result<String, Error>?
@@ -70,14 +73,26 @@ enum CoordinatedFileAccess {
                 if let size = values.fileSize, size > maximumBytes {
                     throw CoordinatedFileAccessError.fileTooLarge
                 }
-                let data = try Data(contentsOf: coordinatedURL, options: .mappedIfSafe)
-                guard data.count <= maximumBytes else {
+                let fileSystem: LocalFileSystem
+                if let openFileForReading {
+                    fileSystem = LocalFileSystem(
+                        rootURL: coordinatedURL.deletingLastPathComponent(),
+                        openFileForReading: openFileForReading
+                    )
+                } else {
+                    fileSystem = LocalFileSystem(
+                        rootURL: coordinatedURL.deletingLastPathComponent()
+                    )
+                }
+                do {
+                    return try fileSystem.readText(at: coordinatedURL)
+                } catch LocalFileSystemError.fileTooLarge {
                     throw CoordinatedFileAccessError.fileTooLarge
-                }
-                guard let text = String(data: data, encoding: .utf8) else {
+                } catch LocalFileSystemError.invalidText {
                     throw CoordinatedFileAccessError.invalidText
+                } catch LocalFileSystemError.notRegularFile {
+                    throw CoordinatedFileAccessError.notRegularFile
                 }
-                return text
             }
         }
 

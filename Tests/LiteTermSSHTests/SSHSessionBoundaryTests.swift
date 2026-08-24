@@ -254,6 +254,31 @@ final class SSHSessionBoundaryTests: XCTestCase {
         XCTAssertEqual(FileManager.default.fileExists(atPath: renamed.path), true)
     }
 
+    func testEditorReadUsesChunkedBoundedReaderAndClosesOnGrowth() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Editor-Bounded-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        let fileURL = root.appendingPathComponent("growing.txt")
+        try Data("initial".utf8).write(to: fileURL)
+        let handle = BoundaryGrowingReadHandle(
+            totalBytes: LocalFileSystem.maximumTextFileBytes + 1
+        )
+
+        do {
+            _ = try CoordinatedFileAccess.readText(
+                from: fileURL,
+                openFileForReading: { _ in handle }
+            )
+            XCTFail("An editor read that grows beyond 5 MiB must be rejected")
+        } catch CoordinatedFileAccessError.fileTooLarge {
+            // Expected.
+        }
+
+        XCTAssertEqual(handle.maximumRequestedCount, 64 * 1024)
+        XCTAssertEqual(handle.totalBytesRead, LocalFileSystem.maximumTextFileBytes + 1)
+        XCTAssertTrue(handle.isClosed)
+    }
+
     func testCoordinatorPassesCommandCostAndRejectsBeyondTheBlockedQueueBudget() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("LiteTerm-Queue-Boundary-\(UUID().uuidString)", isDirectory: true)
@@ -806,6 +831,39 @@ private struct RelocatingDeletionCoordinator: LocalDeletionCoordinating {
 
     func coordinateDeletion(at requestedURL: URL, accessor: (URL) throws -> Void) throws {
         try accessor(callbackURL)
+    }
+}
+
+private final class BoundaryGrowingReadHandle: LocalFileReadHandle, @unchecked Sendable {
+    private struct State {
+        var remainingBytes: Int
+        var totalBytesRead = 0
+        var maximumRequestedCount = 0
+        var isClosed = false
+    }
+
+    private let state: NIOLockedValueBox<State>
+
+    init(totalBytes: Int) {
+        state = NIOLockedValueBox(State(remainingBytes: totalBytes))
+    }
+
+    var totalBytesRead: Int { state.withLockedValue { $0.totalBytesRead } }
+    var maximumRequestedCount: Int { state.withLockedValue { $0.maximumRequestedCount } }
+    var isClosed: Bool { state.withLockedValue { $0.isClosed } }
+
+    func read(upToCount count: Int) throws -> Data {
+        state.withLockedValue { state in
+            state.maximumRequestedCount = max(state.maximumRequestedCount, count)
+            let byteCount = min(count, state.remainingBytes)
+            state.remainingBytes -= byteCount
+            state.totalBytesRead += byteCount
+            return Data(repeating: 0x41, count: byteCount)
+        }
+    }
+
+    func close() throws {
+        state.withLockedValue { $0.isClosed = true }
     }
 }
 
