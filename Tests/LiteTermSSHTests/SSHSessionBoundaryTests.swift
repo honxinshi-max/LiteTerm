@@ -1,6 +1,7 @@
 import Crypto
 import LiteTermCore
 import NIOConcurrencyHelpers
+import NIOCore
 import NIOEmbedded
 import NIOSSH
 import SwiftUI
@@ -102,17 +103,7 @@ final class SSHSessionBoundaryTests: XCTestCase {
         XCTAssertFalse(cancelled.succeeded)
     }
 
-    func testOutputAdmissionIsBoundedAndControllerAcknowledgesAfterMainActorDelivery() async throws {
-        var gate = SSHOutputDeliveryGate(maximumChunkBytes: 4)
-        let admission = gate.admit(byteCount: 4)
-        guard case .accepted(let token) = admission else {
-            return XCTFail("Expected first bounded output chunk to be accepted")
-        }
-        XCTAssertEqual(gate.admit(byteCount: 1), .overflow)
-        XCTAssertTrue(gate.acknowledge(token: token))
-        XCTAssertFalse(gate.acknowledge(token: token))
-        XCTAssertEqual(gate.admit(byteCount: 5), .overflow)
-
+    func testControllerAcknowledgesAfterMainActorDelivery() async throws {
         let host = try makeHost()
         let secrets = makeSecrets()
         defer { clean(secrets, hostID: host.id) }
@@ -135,6 +126,193 @@ final class SSHSessionBoundaryTests: XCTestCase {
         XCTAssertFalse(acknowledged.withLockedValue { $0 })
         await drainMainActor()
         XCTAssertTrue(acknowledged.withLockedValue { $0 })
+    }
+
+    func testProductionTerminalHandlerCoalescesOneReadCycleBeforeAcknowledgement() throws {
+        XCTAssertTrue(
+            SSHTerminalHandler.defaultMaximumPendingOutputBytes >= 8 * 1024 * 1024
+        )
+        let recorder = BoundarySSHOutboundRecorder()
+        let deliveries = BoundarySSHOutputRecorder()
+        let terminalHandler = SSHTerminalHandler(
+            dimensions: SSHTerminalDimensions(columns: 80, rows: 24),
+            onReady: {},
+            onBytes: deliveries.record,
+            onError: deliveries.record(error:),
+            onClosed: deliveries.recordClosed
+        )
+        let loop = EmbeddedEventLoop()
+        let channel = EmbeddedChannel(
+            handlers: [recorder, terminalHandler],
+            loop: loop
+        )
+        defer { _ = try? channel.finish() }
+        let address = try SocketAddress(ipAddress: "127.0.0.1", port: 22)
+        try channel.connect(to: address).wait()
+        let readsBeforeOutput = recorder.readCount
+
+        channel.pipeline.fireChannelRead(
+            sshChannelData([0x41, 0x42], allocator: channel.allocator)
+        )
+        channel.pipeline.fireChannelRead(
+            sshChannelData([0x43, 0x44], allocator: channel.allocator)
+        )
+        XCTAssertTrue(deliveries.bytes.isEmpty)
+        XCTAssertTrue(deliveries.errors.isEmpty)
+        XCTAssertTrue(channel.isActive)
+        channel.pipeline.fireChannelReadComplete()
+
+        XCTAssertEqual(deliveries.bytes, [[0x41, 0x42, 0x43, 0x44]])
+        XCTAssertEqual(deliveries.errors.count, 0)
+        XCTAssertEqual(deliveries.closedCount, 0)
+        XCTAssertTrue(channel.isActive)
+        XCTAssertEqual(recorder.readCount, readsBeforeOutput)
+
+        try XCTUnwrap(deliveries.acknowledgements.first)()
+        loop.run()
+        XCTAssertEqual(recorder.readCount, readsBeforeOutput + 1)
+    }
+
+    func testProductionTerminalHandlerSplitsBatchesAndRejectsStaleAcknowledgements() throws {
+        let recorder = BoundarySSHOutboundRecorder()
+        let deliveries = BoundarySSHOutputRecorder()
+        let terminalHandler = SSHTerminalHandler(
+            dimensions: SSHTerminalDimensions(columns: 80, rows: 24),
+            maximumPendingOutputBytes: 8,
+            maximumDeliveryBatchBytes: 3,
+            onReady: {},
+            onBytes: deliveries.record,
+            onError: deliveries.record(error:),
+            onClosed: deliveries.recordClosed
+        )
+        let loop = EmbeddedEventLoop()
+        let channel = EmbeddedChannel(
+            handlers: [recorder, terminalHandler],
+            loop: loop
+        )
+        defer { _ = try? channel.finish() }
+        try channel.connect(
+            to: SocketAddress(ipAddress: "127.0.0.1", port: 22)
+        ).wait()
+        let readsBeforeOutput = recorder.readCount
+
+        channel.pipeline.fireChannelRead(
+            sshChannelData([0, 1, 2, 3], allocator: channel.allocator)
+        )
+        channel.pipeline.fireChannelRead(
+            sshChannelData([4, 5, 6, 7], allocator: channel.allocator)
+        )
+        channel.pipeline.fireChannelReadComplete()
+
+        XCTAssertEqual(deliveries.bytes, [[0, 1, 2]])
+        XCTAssertEqual(recorder.readCount, readsBeforeOutput)
+        let firstAcknowledgement = try XCTUnwrap(deliveries.acknowledgements.first)
+        firstAcknowledgement()
+        loop.run()
+        XCTAssertEqual(deliveries.bytes, [[0, 1, 2], [3, 4, 5]])
+        XCTAssertEqual(recorder.readCount, readsBeforeOutput)
+
+        firstAcknowledgement()
+        loop.run()
+        XCTAssertEqual(deliveries.bytes, [[0, 1, 2], [3, 4, 5]])
+        XCTAssertEqual(recorder.readCount, readsBeforeOutput)
+
+        let secondAcknowledgement = try XCTUnwrap(deliveries.acknowledgements.last)
+        secondAcknowledgement()
+        loop.run()
+        XCTAssertEqual(deliveries.bytes, [[0, 1, 2], [3, 4, 5], [6, 7]])
+        XCTAssertEqual(recorder.readCount, readsBeforeOutput)
+
+        try XCTUnwrap(deliveries.acknowledgements.last)()
+        loop.run()
+        XCTAssertEqual(recorder.readCount, readsBeforeOutput + 1)
+        XCTAssertTrue(deliveries.errors.isEmpty)
+        XCTAssertTrue(channel.isActive)
+    }
+
+    func testProductionTerminalHandlerFailsClosedAtCumulativePendingCap() throws {
+        let recorder = BoundarySSHOutboundRecorder()
+        let deliveries = BoundarySSHOutputRecorder()
+        let terminalHandler = SSHTerminalHandler(
+            dimensions: SSHTerminalDimensions(columns: 80, rows: 24),
+            maximumPendingOutputBytes: 5,
+            maximumDeliveryBatchBytes: 3,
+            onReady: {},
+            onBytes: deliveries.record,
+            onError: deliveries.record(error:),
+            onClosed: deliveries.recordClosed
+        )
+        let loop = EmbeddedEventLoop()
+        let channel = EmbeddedChannel(
+            handlers: [recorder, terminalHandler],
+            loop: loop
+        )
+        defer { _ = try? channel.finish() }
+        try channel.connect(
+            to: SocketAddress(ipAddress: "127.0.0.1", port: 22)
+        ).wait()
+        let readsBeforeOutput = recorder.readCount
+
+        channel.pipeline.fireChannelRead(
+            sshChannelData([0, 1, 2], allocator: channel.allocator)
+        )
+        channel.pipeline.fireChannelRead(
+            sshChannelData([3, 4, 5], allocator: channel.allocator)
+        )
+        loop.run()
+
+        XCTAssertEqual(deliveries.bytes, [])
+        XCTAssertEqual(deliveries.errors.count, 1)
+        guard
+            let error = deliveries.errors.first as? SSHTerminalHandlerError,
+            case .outputBackpressureOverflow = error
+        else {
+            return XCTFail("Expected cumulative output overflow")
+        }
+        XCTAssertFalse(channel.isActive)
+        XCTAssertEqual(deliveries.closedCount, 1)
+        XCTAssertEqual(recorder.readCount, readsBeforeOutput)
+    }
+
+    func testProductionTerminalHandlerClearsQueuedOutputWhenChannelCloses() throws {
+        let recorder = BoundarySSHOutboundRecorder()
+        let deliveries = BoundarySSHOutputRecorder()
+        let terminalHandler = SSHTerminalHandler(
+            dimensions: SSHTerminalDimensions(columns: 80, rows: 24),
+            maximumPendingOutputBytes: 8,
+            maximumDeliveryBatchBytes: 3,
+            onReady: {},
+            onBytes: deliveries.record,
+            onError: deliveries.record(error:),
+            onClosed: deliveries.recordClosed
+        )
+        let loop = EmbeddedEventLoop()
+        let channel = EmbeddedChannel(
+            handlers: [recorder, terminalHandler],
+            loop: loop
+        )
+        defer { _ = try? channel.finish() }
+        try channel.connect(
+            to: SocketAddress(ipAddress: "127.0.0.1", port: 22)
+        ).wait()
+        let readsBeforeOutput = recorder.readCount
+
+        channel.pipeline.fireChannelRead(
+            sshChannelData([0, 1, 2, 3, 4, 5], allocator: channel.allocator)
+        )
+        channel.pipeline.fireChannelReadComplete()
+        XCTAssertEqual(deliveries.bytes, [[0, 1, 2]])
+        let acknowledgement = try XCTUnwrap(deliveries.acknowledgements.first)
+
+        try channel.close().wait()
+        loop.run()
+        XCTAssertEqual(deliveries.closedCount, 1)
+        XCTAssertEqual(recorder.readCount, readsBeforeOutput)
+        acknowledgement()
+        loop.run()
+        XCTAssertEqual(deliveries.bytes, [[0, 1, 2]])
+        XCTAssertEqual(recorder.readCount, readsBeforeOutput)
+        XCTAssertTrue(deliveries.errors.isEmpty)
     }
 
     func testInactiveConnectStartsNoNetworkAndActiveResumesOnlyEnabledHost() async throws {
@@ -331,6 +509,62 @@ final class SSHSessionBoundaryTests: XCTestCase {
             await Task.yield()
         }
     }
+}
+
+private final class BoundarySSHOutboundRecorder: ChannelOutboundHandler {
+    typealias OutboundIn = Never
+
+    private(set) var readCount = 0
+
+    func read(context: ChannelHandlerContext) {
+        readCount += 1
+        context.read()
+    }
+
+    func triggerUserOutboundEvent(
+        context: ChannelHandlerContext,
+        event: Any,
+        promise: EventLoopPromise<Void>?
+    ) {
+        promise?.succeed(())
+    }
+}
+
+private final class BoundarySSHOutputRecorder: @unchecked Sendable {
+    private let storage = NIOLockedValueBox(
+        (bytes: [[UInt8]](), acknowledgements: [@Sendable () -> Void](), errors: [Error](), closed: 0)
+    )
+
+    var bytes: [[UInt8]] { storage.withLockedValue { $0.bytes } }
+    var acknowledgements: [@Sendable () -> Void] {
+        storage.withLockedValue { $0.acknowledgements }
+    }
+    var errors: [Error] { storage.withLockedValue { $0.errors } }
+    var closedCount: Int { storage.withLockedValue { $0.closed } }
+
+    func record(_ bytes: [UInt8], acknowledgement: @escaping @Sendable () -> Void) {
+        storage.withLockedValue { state in
+            state.bytes.append(bytes)
+            state.acknowledgements.append(acknowledgement)
+        }
+    }
+
+    func record(error: Error) {
+        storage.withLockedValue { $0.errors.append(error) }
+    }
+
+    func recordClosed() {
+        storage.withLockedValue { $0.closed += 1 }
+    }
+}
+
+private func sshChannelData(
+    _ bytes: [UInt8],
+    allocator: ByteBufferAllocator
+) -> SSHChannelData {
+    var buffer = allocator.buffer(capacity: bytes.count)
+    buffer.writeBytes(bytes)
+    return SSHChannelData(type: .channel, data: .byteBuffer(buffer))
 }
 
 private final class BoundaryClientStore {
