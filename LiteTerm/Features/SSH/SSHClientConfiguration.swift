@@ -41,6 +41,7 @@ enum SSHStoredHostFingerprint: Equatable, Sendable {
 
 enum SSHClientFailure: Equatable, Sendable {
     case transport
+    case remoteSessionEnded
     case authenticationRejected
     case hostKeyMismatch
     case credentialUnavailable
@@ -51,6 +52,8 @@ enum SSHClientFailure: Equatable, Sendable {
         switch self {
         case .transport:
             return .transport
+        case .remoteSessionEnded:
+            return .remoteSessionEnded
         case .authenticationRejected:
             return .authenticationRejected
         case .hostKeyMismatch:

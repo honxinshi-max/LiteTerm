@@ -117,7 +117,8 @@ final class SSHHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unch
             pending.promise.fail(SSHHostKeyValidationError.hostKeyMismatch)
         case .credentialUnavailable:
             pending.promise.fail(SSHHostKeyValidationError.credentialUnavailable)
-        default:
+        case .transport, .remoteSessionEnded, .authenticationRejected,
+             .trustCancelled, .protocolFailure:
             pending.promise.fail(SSHHostKeyValidationError.trustCancelled)
         }
     }

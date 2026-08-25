@@ -7,6 +7,11 @@ enum SSHTerminalHandlerError: Error, Sendable {
     case outputBackpressureOverflow
 }
 
+enum SSHTerminalCloseReason: Equatable, Sendable {
+    case remoteEOF
+    case transport
+}
+
 struct SSHChildSessionCreationGate {
     private var isClaimed = false
 
@@ -48,7 +53,7 @@ final class SSHTerminalHandler: ChannelDuplexHandler, @unchecked Sendable {
         @escaping @Sendable () -> Void
     ) -> Void
     private let onError: @Sendable (Error) -> Void
-    private let onClosed: @Sendable () -> Void
+    private let onClosed: @Sendable (SSHTerminalCloseReason) -> Void
     private let maximumPendingOutputBytes: Int
     private let maximumDeliveryBatchBytes: Int
     private var setupPhase = SetupPhase.idle
@@ -57,6 +62,7 @@ final class SSHTerminalHandler: ChannelDuplexHandler, @unchecked Sendable {
     private var outputDeliveryInFlight: OutputDelivery?
     private var nextOutputDeliveryToken: UInt64 = 0
     private var readCycleComplete = false
+    private var remoteInputClosed = false
     private var outputIsClosed = false
     private var didNotifyClosed = false
 
@@ -70,7 +76,7 @@ final class SSHTerminalHandler: ChannelDuplexHandler, @unchecked Sendable {
             @escaping @Sendable () -> Void
         ) -> Void,
         onError: @escaping @Sendable (Error) -> Void,
-        onClosed: @escaping @Sendable () -> Void
+        onClosed: @escaping @Sendable (SSHTerminalCloseReason) -> Void
     ) {
         precondition(
             maximumPendingOutputBytes > 0,
@@ -91,6 +97,15 @@ final class SSHTerminalHandler: ChannelDuplexHandler, @unchecked Sendable {
         self.onBytes = onBytes
         self.onError = onError
         self.onClosed = onClosed
+    }
+
+    func handlerAdded(context: ChannelHandlerContext) {
+        context.channel.setOption(
+            ChannelOptions.allowRemoteHalfClosure,
+            value: true
+        ).assumeIsolated().whenFailure { [weak self] error in
+            self?.fail(error, context: context)
+        }
     }
 
     func channelActive(context: ChannelHandlerContext) {
@@ -115,6 +130,12 @@ final class SSHTerminalHandler: ChannelDuplexHandler, @unchecked Sendable {
     }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if let channelEvent = event as? ChannelEvent, case .inputClosed = channelEvent {
+            remoteInputClosed = true
+            advanceOutput(on: context.channel)
+            return
+        }
+
         switch (setupPhase, event) {
         case (.awaitingPTYReply, is ChannelSuccessEvent):
             setupPhase = .awaitingShellReply
@@ -189,7 +210,7 @@ final class SSHTerminalHandler: ChannelDuplexHandler, @unchecked Sendable {
         outputIsClosed = true
         if !didNotifyClosed {
             didNotifyClosed = true
-            onClosed()
+            onClosed(remoteInputClosed ? .remoteEOF : .transport)
         }
         context.fireChannelInactive()
     }
@@ -247,6 +268,10 @@ final class SSHTerminalHandler: ChannelDuplexHandler, @unchecked Sendable {
         }
 
         pendingOutput = nil
+        if remoteInputClosed {
+            finishRemoteClosure(on: channel)
+            return
+        }
         guard readCycleComplete else { return }
         readCycleComplete = false
         channel.read()
@@ -275,5 +300,18 @@ final class SSHTerminalHandler: ChannelDuplexHandler, @unchecked Sendable {
         bufferedUnsanitizedByteCount = 0
         outputDeliveryInFlight = nil
         readCycleComplete = false
+    }
+
+    private func finishRemoteClosure(on channel: Channel) {
+        guard
+            !outputIsClosed,
+            outputDeliveryInFlight == nil,
+            bufferedUnsanitizedByteCount == 0
+        else {
+            return
+        }
+        outputIsClosed = true
+        readCycleComplete = false
+        channel.close(promise: nil)
     }
 }

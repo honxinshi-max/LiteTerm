@@ -135,4 +135,32 @@ final class SSHConnectionStateTests: XCTestCase {
         XCTAssertNil(orchestrator.scenePhaseChanged(isActive: false))
         XCTAssertNil(orchestrator.scenePhaseChanged(isActive: true))
     }
+
+    func testFailureRecoverySeparatesRetryFromSecurityAndCredentialRepair() {
+        XCTAssertEqual(SSHFailureCategory.transport.presentation.recovery, .retry)
+        XCTAssertEqual(SSHFailureCategory.authenticationRejected.presentation.recovery, .retry)
+        XCTAssertEqual(SSHFailureCategory.remoteSessionEnded.presentation.recovery, .retry)
+        XCTAssertEqual(SSHFailureCategory.protocolFailure.presentation.recovery, .retry)
+        XCTAssertEqual(SSHFailureCategory.hostKeyMismatch.presentation.recovery, .reviewHostKey)
+        XCTAssertEqual(SSHFailureCategory.credentialUnavailable.presentation.recovery, .repairCredential)
+        XCTAssertEqual(SSHFailureCategory.trustCancelled.presentation.recovery, .reviewHostKey)
+    }
+
+    func testManualRetryStartsOnlyForRecoverableFailedState() {
+        var retryable = SSHConnectionStateReducer()
+        let retryableGeneration = retryable.beginConnection()
+        XCTAssertTrue(
+            retryable.reduce(.failed(.remoteSessionEnded), generation: retryableGeneration)
+        )
+        XCTAssertNotNil(retryable.beginManualRetry())
+        XCTAssertEqual(retryable.state, .connecting)
+
+        var guarded = SSHConnectionStateReducer()
+        let guardedGeneration = guarded.beginConnection()
+        XCTAssertTrue(
+            guarded.reduce(.failed(.hostKeyMismatch), generation: guardedGeneration)
+        )
+        XCTAssertNil(guarded.beginManualRetry())
+        XCTAssertEqual(guarded.state, .failed(.hostKeyMismatch))
+    }
 }

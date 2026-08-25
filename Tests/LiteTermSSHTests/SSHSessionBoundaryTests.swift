@@ -652,6 +652,40 @@ final class SSHSessionBoundaryTests: XCTestCase {
         XCTAssertEqual(disabledController.state, .disconnected)
     }
 
+    func testManualRetryRestartsRemoteEndedSessionButCannotBypassHostKeyReview() async throws {
+        let host = try makeHost(reconnectPreference: .disabled)
+        let secrets = makeSecrets()
+        defer { clean(secrets, hostID: host.id) }
+        try installPassword(in: secrets, hostID: host.id)
+        let terminal = TerminalSessionCoordinator(rootURL: URL(fileURLWithPath: "/tmp"))
+        let clients = BoundaryClientStore()
+        let controller = SSHSessionController(
+            secrets: secrets,
+            terminalSession: terminal,
+            clientFactory: clients.makeClient
+        )
+        controller.scenePhaseChanged(.active)
+        controller.connect(host: host)
+        let first = try XCTUnwrap(clients.clients.first)
+
+        first.fail(.remoteSessionEnded)
+        await drainMainActor()
+        XCTAssertEqual(controller.state, .failed(.remoteSessionEnded))
+        controller.retryCurrentHost()
+        await drainMainActor()
+        XCTAssertEqual(clients.clients.count, 2)
+        XCTAssertTrue(clients.clients[1].didConnect)
+        XCTAssertEqual(controller.state, .connecting)
+
+        clients.clients[1].fail(.hostKeyMismatch)
+        await drainMainActor()
+        XCTAssertEqual(controller.state, .failed(.hostKeyMismatch))
+        controller.retryCurrentHost()
+        await drainMainActor()
+        XCTAssertEqual(clients.clients.count, 2)
+        XCTAssertEqual(controller.state, .failed(.hostKeyMismatch))
+    }
+
     func testLocalTerminalSizeBecomesInitialPTYSizeAndNormalizesMinimums() async throws {
         let host = try makeHost()
         let secrets = makeSecrets()
@@ -888,7 +922,12 @@ private final class BoundarySSHOutboundRecorder: ChannelOutboundHandler {
 
 private final class BoundarySSHOutputRecorder: @unchecked Sendable {
     private let storage = NIOLockedValueBox(
-        (bytes: [[UInt8]](), acknowledgements: [@Sendable () -> Void](), errors: [Error](), closed: 0)
+        (
+            bytes: [[UInt8]](),
+            acknowledgements: [@Sendable () -> Void](),
+            errors: [Error](),
+            closeReasons: [SSHTerminalCloseReason]()
+        )
     )
 
     var bytes: [[UInt8]] { storage.withLockedValue { $0.bytes } }
@@ -896,7 +935,7 @@ private final class BoundarySSHOutputRecorder: @unchecked Sendable {
         storage.withLockedValue { $0.acknowledgements }
     }
     var errors: [Error] { storage.withLockedValue { $0.errors } }
-    var closedCount: Int { storage.withLockedValue { $0.closed } }
+    var closedCount: Int { storage.withLockedValue { $0.closeReasons.count } }
 
     func record(_ bytes: [UInt8], acknowledgement: @escaping @Sendable () -> Void) {
         storage.withLockedValue { state in
@@ -909,8 +948,8 @@ private final class BoundarySSHOutputRecorder: @unchecked Sendable {
         storage.withLockedValue { $0.errors.append(error) }
     }
 
-    func recordClosed() {
-        storage.withLockedValue { $0.closed += 1 }
+    func recordClosed(_ reason: SSHTerminalCloseReason) {
+        storage.withLockedValue { $0.closeReasons.append(reason) }
     }
 }
 
@@ -1025,6 +1064,10 @@ private final class BoundarySSHClient: SSHClientTransport, @unchecked Sendable {
         configuration.callbacks.receiveBytes(bytes) {
             acknowledged.withLockedValue { $0 = true }
         }
+    }
+
+    func fail(_ failure: SSHClientFailure) {
+        configuration.callbacks.connectionClosed(failure)
     }
 }
 
