@@ -178,8 +178,11 @@ final class SSHClient: SSHClientTransport, @unchecked Sendable {
                 onError: { [weak self] error in
                     self?.fail(error)
                 },
-                onClosed: { [weak self] in
-                    self?.beginShutdown(failure: .transport, completion: nil)
+                onClosed: { [weak self] reason in
+                    let failure: SSHClientFailure = reason == .remoteEOF
+                        ? .remoteSessionEnded
+                        : .transport
+                    self?.beginShutdown(failure: failure, completion: nil)
                 }
             )
             return childChannel.setOption(ChannelOptions.autoRead, value: false).flatMap {

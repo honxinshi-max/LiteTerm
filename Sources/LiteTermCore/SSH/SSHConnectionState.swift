@@ -2,11 +2,83 @@ import Foundation
 
 public enum SSHFailureCategory: String, Equatable, Sendable {
     case transport
+    case remoteSessionEnded
     case authenticationRejected
     case hostKeyMismatch
     case credentialUnavailable
     case trustCancelled
     case protocolFailure
+}
+
+public enum SSHFailureRecovery: Equatable, Sendable {
+    case retry
+    case reviewHostKey
+    case repairCredential
+}
+
+public struct SSHFailurePresentation: Equatable, Sendable {
+    public let title: String
+    public let message: String
+    public let recovery: SSHFailureRecovery
+
+    public init(title: String, message: String, recovery: SSHFailureRecovery) {
+        self.title = title
+        self.message = message
+        self.recovery = recovery
+    }
+
+    public var allowsManualRetry: Bool {
+        recovery == .retry
+    }
+}
+
+public extension SSHFailureCategory {
+    var presentation: SSHFailurePresentation {
+        switch self {
+        case .transport:
+            return SSHFailurePresentation(
+                title: "Connection lost",
+                message: "Check the network, host address, and SSH port, then retry.",
+                recovery: .retry
+            )
+        case .remoteSessionEnded:
+            return SSHFailurePresentation(
+                title: "Remote session ended",
+                message: "The remote shell closed the session. Retry to start a new shell.",
+                recovery: .retry
+            )
+        case .authenticationRejected:
+            return SSHFailurePresentation(
+                title: "Authentication rejected",
+                message: "Check the username and saved password or public key, then retry.",
+                recovery: .retry
+            )
+        case .hostKeyMismatch:
+            return SSHFailurePresentation(
+                title: "Host key changed",
+                message: "Do not retry blindly. Verify the server fingerprint before replacing trust.",
+                recovery: .reviewHostKey
+            )
+        case .credentialUnavailable:
+            return SSHFailurePresentation(
+                title: "Credential unavailable",
+                message: "Repair or save the host credential before reconnecting.",
+                recovery: .repairCredential
+            )
+        case .trustCancelled:
+            return SSHFailurePresentation(
+                title: "Host verification cancelled",
+                message: "Open Hosts and reconnect when you are ready to review the fingerprint.",
+                recovery: .reviewHostKey
+            )
+        case .protocolFailure:
+            return SSHFailurePresentation(
+                title: "SSH protocol error",
+                message: "The server rejected an SSH request or used an unsupported protocol path.",
+                recovery: .retry
+            )
+        }
+    }
 }
 
 public enum SSHConnectionState: Equatable, Sendable {
@@ -56,6 +128,19 @@ public struct SSHConnectionStateReducer: Sendable {
     public mutating func disconnect() -> UInt64 {
         advanceGeneration()
         state = .disconnected
+        return generation
+    }
+
+    @discardableResult
+    public mutating func beginManualRetry() -> UInt64? {
+        guard
+            case .failed(let category) = state,
+            category.presentation.allowsManualRetry
+        else {
+            return nil
+        }
+        advanceGeneration()
+        state = .connecting
         return generation
     }
 

@@ -1442,6 +1442,46 @@ struct LiteTermCoreTestRunner {
             expect(secureStop.connectionFailed(failure) == nil, "security failure schedules no reconnect", &failures)
             expect(!secureStop.wantsConnection, "security failure cancels reconnect intent", &failures)
         }
+
+        expect(
+            SSHFailureCategory.transport.presentation.recovery == .retry,
+            "transport failure offers a manual retry",
+            &failures
+        )
+        expect(
+            SSHFailureCategory.remoteSessionEnded.presentation.recovery == .retry,
+            "remote session end offers a manual retry",
+            &failures
+        )
+        expect(
+            SSHFailureCategory.hostKeyMismatch.presentation.recovery == .reviewHostKey,
+            "host-key mismatch requires review instead of blind retry",
+            &failures
+        )
+        expect(
+            SSHFailureCategory.credentialUnavailable.presentation.recovery == .repairCredential,
+            "missing credential requires repair instead of blind retry",
+            &failures
+        )
+
+        var retryable = SSHConnectionStateReducer()
+        let retryableGeneration = retryable.beginConnection()
+        _ = retryable.reduce(.failed(.remoteSessionEnded), generation: retryableGeneration)
+        expect(
+            retryable.beginManualRetry() != nil && retryable.state == .connecting,
+            "manual retry restarts a recoverable failed connection",
+            &failures
+        )
+
+        var guardedRetry = SSHConnectionStateReducer()
+        let guardedGeneration = guardedRetry.beginConnection()
+        _ = guardedRetry.reduce(.failed(.hostKeyMismatch), generation: guardedGeneration)
+        expect(
+            guardedRetry.beginManualRetry() == nil
+                && guardedRetry.state == .failed(.hostKeyMismatch),
+            "manual retry cannot bypass host-key review",
+            &failures
+        )
     }
 
     private static func checkAcceptanceFlow(_ failures: inout [String]) async {

@@ -56,6 +56,11 @@ final class SSHSessionController: ObservableObject {
         self.reconnectSleep = reconnectSleep
     }
 
+    var failurePresentation: SSHFailurePresentation? {
+        guard case .failed(let category) = state else { return nil }
+        return category.presentation
+    }
+
     func connect(host: SSHHost) {
         retryTask?.cancel()
         retryTask = nil
@@ -111,6 +116,25 @@ final class SSHSessionController: ObservableObject {
         if let previousClient {
             retire(previousClient)
         }
+    }
+
+    func retryCurrentHost() {
+        guard
+            sceneIsActive,
+            client == nil,
+            let host = currentHost,
+            let generation = reducer.beginManualRetry()
+        else {
+            return
+        }
+        retryTask?.cancel()
+        retryTask = nil
+        deferredStart = nil
+        pendingHostTrust = nil
+        reconnect.userInitiatedConnection()
+        terminalSession.beginSSHConnection(generation: generation, state: reducer.state)
+        publishState()
+        startClient(for: host, generation: generation)
     }
 
     func send(_ bytes: [UInt8]) {
@@ -319,6 +343,8 @@ final class SSHSessionController: ObservableObject {
         }
 
         switch failure {
+        case .remoteSessionEnded:
+            reconnect.manualDisconnect()
         case .authenticationRejected:
             _ = reconnect.connectionFailed(.authenticationRejected)
         case .hostKeyMismatch:

@@ -7,6 +7,12 @@ struct TerminalScreen: View {
         NavigationStack {
             VStack(spacing: 0) {
                 controls
+                if model.mode == .ssh {
+                    SSHFailureBanner(
+                        session: model.sshSession,
+                        onOpenHosts: model.requestHosts
+                    )
+                }
                 Text("Local commands can access only App Documents or a folder you choose in Files.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -128,6 +134,37 @@ struct TerminalScreen: View {
             get: { model.authorizationErrorMessage != nil },
             set: { if !$0 { model.authorizationErrorMessage = nil } }
         )
+    }
+}
+
+private struct SSHFailureBanner: View {
+    @ObservedObject var session: SSHSessionController
+    let onOpenHosts: () -> Void
+
+    var body: some View {
+        if let failure = session.failurePresentation {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(failure.title, systemImage: "exclamationmark.triangle.fill")
+                    .font(.subheadline.weight(.semibold))
+                Text(failure.message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    if failure.allowsManualRetry {
+                        Button("Retry", action: session.retryCurrentHost)
+                            .buttonStyle(.borderedProminent)
+                    }
+                    Button("Open Hosts", action: onOpenHosts)
+                        .buttonStyle(.bordered)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+            .accessibilityIdentifier("SSH failure recovery")
+        }
     }
 }
 

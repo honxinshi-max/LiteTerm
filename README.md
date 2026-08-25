@@ -49,6 +49,7 @@ pwd  ls  cd  cat  mkdir  touch  cp  mv  rm  clear  edit
 - Connect、Disconnect、终端尺寸同步和真正的交互式 `xterm-256color` PTY Shell
 - 前台网络中断后有限重连：最多 3 次，间隔 1、2、4 秒
 - 首次连接明确确认服务器 SHA-256 指纹；服务器密钥变化时硬失败，必须由用户重新确认
+- 远端 Shell 正常结束时先交付末尾输出再关闭会话；界面将其与网络故障区分，并提供显式重试入口
 
 V0.1 **不导入任意 PEM/RSA/加密私钥**。这是对“SSH Key”范围的有意收窄，可降低解析器、密码学兼容和密钥迁移风险。远程机器已有的 Git、Python、npm、Codex、Hermes 等 CLI 可以在 SSH Shell 中正常使用，LiteTerm 本身不内置这些工具。
 
@@ -160,6 +161,7 @@ GitHub 中的是**源代码，不是可在 iPad“文件”App 中启用的程�
 
 ```sh
 ./scripts/run-core-tests.sh
+./scripts/run-ssh-integration-tests.sh
 swift build
 ./scripts/verify-project.sh
 git diff --check
@@ -170,7 +172,7 @@ git diff --check
   LiteTerm.xcodeproj/project.pbxproj
 ```
 
-当前可移植验证运行 30 项 `LiteTermCore` 检查，并核验工程结构、依赖锁、target membership、AppIcon、Privacy Manifest 和资源声明。若环境提供真实 XCTest，可补充运行：
+当前可移植验证运行 30 项 `LiteTermCore` 检查，并启动进程内真实 SwiftNIO SSH 环回服务器，覆盖密码认证、首次 Host Key 信任、PTY 建立、输入输出、窗口 resize、末尾输出、远端 EOF 和客户端关闭；同时核验工程结构、依赖锁、target membership、AppIcon、Privacy Manifest 和资源声明。环回测试证明传输协议与生命周期行为，不代替外部 OpenSSH、完整 Xcode 或实体 iPad 验收。若环境提供真实 XCTest，可补充运行：
 
 ```sh
 LITETERM_ENABLE_SWIFTPM_XCTESTS=1 swift test

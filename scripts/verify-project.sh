@@ -36,7 +36,16 @@ for required_path in \
     LiteTerm/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png \
     Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy \
     THIRD_PARTY_NOTICES.md \
-    Tests/LiteTermCoreTests/AcceptanceFlowTests.swift
+    Tests/LiteTermCoreTests/AcceptanceFlowTests.swift \
+    Tests/SSHIntegrationRunner/Package.swift \
+    Tests/SSHIntegrationRunner/Package.resolved \
+    Tests/SSHIntegrationRunner/main.swift \
+    Tests/SSHIntegrationRunner/SSHAuthenticationDelegate.swift \
+    Tests/SSHIntegrationRunner/SSHClient.swift \
+    Tests/SSHIntegrationRunner/SSHClientConfiguration.swift \
+    Tests/SSHIntegrationRunner/SSHHostKeyValidator.swift \
+    Tests/SSHIntegrationRunner/SSHTerminalHandler.swift \
+    scripts/run-ssh-integration-tests.sh
 do
     test -f "$required_path" || fail "missing $required_path"
 done
@@ -44,6 +53,9 @@ pass "required project files exist"
 
 ./scripts/run-core-tests.sh
 pass "actual LiteTermCore custom runner executed"
+
+./scripts/run-ssh-integration-tests.sh
+pass "real loopback SSH integration runner executed"
 
 swift build
 pass "portable LiteTermCore package builds"
@@ -175,6 +187,31 @@ expected_resolved = {
 }
 actual_resolved = resolved.fetch("pins").to_h { |pin| [pin.fetch("identity"), pin.dig("state", "revision")] }
 assert(actual_resolved == expected_resolved, "Package.resolved does not match the reviewed exact graph")
+
+integration_resolved = JSON.parse(File.read("Tests/SSHIntegrationRunner/Package.resolved"))
+integration_actual_resolved = integration_resolved.fetch("pins").to_h do |pin|
+  [pin.fetch("identity"), pin.dig("state", "revision")]
+end
+integration_expected_resolved = expected_resolved.reject do |identity, _revision|
+  %w[swift-argument-parser swiftterm].include?(identity)
+end
+assert(
+  integration_actual_resolved == integration_expected_resolved,
+  "SSH integration Package.resolved does not match the reviewed transport graph"
+)
+
+integration_source_links = {
+  "SSHAuthenticationDelegate.swift" => "../../LiteTerm/Features/SSH/SSHAuthenticationDelegate.swift",
+  "SSHClient.swift" => "../../LiteTerm/Features/SSH/SSHClient.swift",
+  "SSHClientConfiguration.swift" => "../../LiteTerm/Features/SSH/SSHClientConfiguration.swift",
+  "SSHHostKeyValidator.swift" => "../../LiteTerm/Features/SSH/SSHHostKeyValidator.swift",
+  "SSHTerminalHandler.swift" => "../../LiteTerm/Features/SSH/SSHTerminalHandler.swift"
+}
+integration_source_links.each do |name, expected_target|
+  path = File.join("Tests/SSHIntegrationRunner", name)
+  assert(File.symlink?(path), "#{path} must be a symlink to the reviewed production source")
+  assert(File.readlink(path) == expected_target, "#{path} symlink target changed")
+end
 
 info_json, info_status = Open3.capture2("/usr/bin/plutil", "-convert", "json", "-o", "-", "LiteTerm/Resources/Info.plist")
 assert(info_status.success?, "Info.plist JSON conversion failed")
