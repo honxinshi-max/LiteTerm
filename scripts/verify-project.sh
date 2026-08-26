@@ -40,7 +40,26 @@ for required_path in \
     Vendor/CPython/README.md \
     LiteTermPythonBridge/include/LiteTermPythonBridge.h \
     LiteTermPythonBridge/LiteTermPythonBridge.m \
+    Sources/LiteTermCore/Workspace/WorkspaceKind.swift \
+    Sources/LiteTermCore/Workspace/WorkspaceClassifier.swift \
+    Sources/LiteTermCore/Workspace/WorkspaceGateReducer.swift \
+    Sources/LiteTermCore/Workspace/ReadyPortLeasePolicy.swift \
+    Sources/LiteTermCore/Workspace/BoundedRuntimeOutput.swift \
+    LiteTerm/Features/Workspace/WorkspaceController.swift \
+    LiteTerm/Features/Workspace/Runtime/LoopbackPreviewServer.swift \
+    LiteTerm/Features/Workspace/Runtime/WebWorkspaceRunner.swift \
+    LiteTerm/Features/Workspace/Runtime/PythonWorkspaceRunner.swift \
+    LiteTerm/Features/Workspace/Runtime/SwiftWorkspaceAdvisor.swift \
     scripts/verify-cpython-artifact.sh \
+    scripts/verify-local-workspaces.sh \
+    scripts/verify-workspace-privacy.sh \
+    Tests/Fixtures/Workspace/WebPassing/index.html \
+    Tests/Fixtures/Workspace/WebFailing/index.html \
+    Tests/Fixtures/Workspace/PythonScript/main.py \
+    Tests/Fixtures/Workspace/PythonWSGI/main.py \
+    Tests/Fixtures/Workspace/PythonFailing/main.py \
+    Tests/Fixtures/Workspace/SwiftCheck/Package.swift \
+    Tests/Fixtures/Workspace/SwiftCheck/Sources/main.swift \
     Tests/LiteTermCoreTests/AcceptanceFlowTests.swift \
     Tests/SSHIntegrationRunner/Package.swift \
     Tests/SSHIntegrationRunner/Package.resolved \
@@ -59,7 +78,10 @@ pass "required project files exist"
 ./scripts/verify-cpython-artifact.sh
 pass "pinned CPython source metadata verified"
 
-./scripts/run-core-tests.sh
+core_output=$(./scripts/run-core-tests.sh)
+printf '%s\n' "$core_output"
+printf '%s\n' "$core_output" | /usr/bin/grep -q '^PASS: 52 LiteTermCore checks$' \
+    || fail "portable runner did not execute the reviewed 52-check workspace suite"
 pass "actual LiteTermCore custom runner executed"
 
 ./scripts/run-ssh-integration-tests.sh
@@ -145,6 +167,12 @@ assert(
   core_package_target.fetch("resources") == [{"path" => "Resources/PrivacyInfo.xcprivacy", "rule" => {"process" => {}}}],
   "LiteTermCore Swift package privacy resource declaration changed"
 )
+workspace_support_target = package.fetch("targets").find { |target| target["name"] == "LiteTermWorkspaceSupport" }
+assert(workspace_support_target, "LiteTermWorkspaceSupport Swift package target missing")
+workspace_support_products = workspace_support_target.fetch("dependencies").map do |dependency|
+  dependency["product"]&.first
+end.compact
+assert(workspace_support_products.include?("NIOHTTP1"), "workspace support target must link NIOHTTP1")
 default_package_target_names = package.fetch("targets").map { |target| target.fetch("name") }
 assert(!default_package_target_names.include?("XCTest"), "default package must not contain a fake XCTest target")
 assert(!default_package_target_names.include?("LiteTermCoreTests"), "default package must not expose XCTest without explicit opt-in")
@@ -305,24 +333,21 @@ target_names = objects.values.select { |object| object["isa"] == "PBXNativeTarge
 %w[LiteTermPythonBridge LiteTermCoreTests LiteTermSSHTests LiteTermPythonBridgeTests LiteTermUITests].each do |name|
   assert(target_names.include?(name), "#{name} generated target missing")
 end
+
+app_dependencies = project.dig("targets", "LiteTerm", "dependencies")
+assert(
+  app_dependencies.include?({"target" => "LiteTermPythonBridge"}),
+  "LiteTerm app target must link the Python bridge capability gate"
+)
+assert(
+  app_dependencies.include?({"package" => "SwiftNIO", "product" => "NIOHTTP1"}),
+  "LiteTerm app target must link NIOHTTP1 for the app-owned loopback listener"
+)
 RUBY
 pass "project model, pins, targets, AppIcon, distinct privacy resources, orientations, local-network copy, and privacy declarations match"
 
-forbidden_pattern='SFTP|port[[:space:]_-]*forward|Docker|VirtualMachine|PythonKit|NodeRuntime|background[[:space:]_-]*keepalive|UIBackgroundModes|NSBonjourServices|CKContainer|CloudKit|NSTask([^[:alnum:]_]|$)|dlopen[[:space:]]*\('
-process_pattern='(^|[^[:alnum:]_])(Foundation[.])?Process[[:space:]]*\('
-if command -v rg >/dev/null 2>&1; then
-    forbidden_matches=$(rg -n -i "$forbidden_pattern" LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj || true)
-    process_matches=$(rg -n "$process_pattern" LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj || true)
-else
-    forbidden_matches=$(/usr/bin/grep -R -E -n -i "$forbidden_pattern" LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj || true)
-    process_matches=$(/usr/bin/grep -R -E -n "$process_pattern" LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj || true)
-fi
-if test -n "$forbidden_matches$process_matches"; then
-    printf '%s\n' "$forbidden_matches"
-    printf '%s\n' "$process_matches"
-    fail "forbidden V0.1 product addition found in production/project scope"
-fi
-pass "production/project scope contains no unreviewed runtime or background additions"
+./scripts/verify-workspace-privacy.sh
+pass "local workspace privacy and capability boundary verifier executed"
 
 python_bridge_log_matches=$(rg -n 'NSLog|os_log|fprintf|printf|puts' LiteTermPythonBridge || true)
 if test -n "$python_bridge_log_matches"; then

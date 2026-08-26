@@ -40,6 +40,7 @@ struct LiteTermCoreTestRunner {
         checkShellArityRejection(&failures)
         checkExactShellCommandSet(&failures)
         checkWorkspaceClassification(&failures)
+        await checkRepositoryWorkspaceFixtures(&failures)
         checkWorkspaceInventoryPolicy(&failures)
         checkWorkspaceProfileAndSnapshot(&failures)
         checkWorkspaceProblemPrivacy(&failures)
@@ -80,7 +81,7 @@ struct LiteTermCoreTestRunner {
         checkSSHConnectionStateAndReconnect(&failures)
         await checkAcceptanceFlow(&failures)
 
-        finish(failures, passingCheckCount: 51)
+        finish(failures, passingCheckCount: 52)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -242,6 +243,90 @@ struct LiteTermCoreTestRunner {
         expect(node.kind == .nodeRequired, "package metadata without static index is Node-required", &failures)
         let unsupported = classifier.classify(relativePaths: ["README.md"])
         expect(unsupported.kind == .unsupported, "unknown project evidence remains unsupported", &failures)
+    }
+
+    private static func checkRepositoryWorkspaceFixtures(_ failures: inout [String]) async {
+        let fixtureRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+            .appendingPathComponent("Tests/Fixtures/Workspace", isDirectory: true)
+        let expectedKinds: [(String, WorkspaceKind)] = [
+            ("WebPassing", .web),
+            ("WebFailing", .web),
+            ("PythonScript", .python),
+            ("PythonWSGI", .python),
+            ("PythonFailing", .python),
+            ("SwiftCheck", .swift)
+        ]
+
+        do {
+            var inspections: [String: WorkspaceInspection] = [:]
+            for (name, expectedKind) in expectedKinds {
+                let root = fixtureRoot.appendingPathComponent(name, isDirectory: true)
+                let inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+                inspections[name] = inspection
+                expect(
+                    inspection.classification.kind == expectedKind,
+                    "repository fixture \(name) classifies as \(expectedKind.rawValue)",
+                    &failures
+                )
+            }
+
+            let snapshotService = WorkspaceSnapshotService()
+            let webProfile = try WorkspaceProfile(
+                kind: .web,
+                entrypoint: "index.html",
+                testConvention: .webSmoke(relativePaths: []),
+                healthPath: ""
+            )
+            if let passingInspection = inspections["WebPassing"] {
+                let passing = try await snapshotService.captureBundle(
+                    generation: 101,
+                    rootURL: fixtureRoot.appendingPathComponent("WebPassing", isDirectory: true),
+                    evaluation: passingInspection.evaluation
+                )
+                expect(
+                    WebWorkspaceRunner.validate(snapshot: passing, profile: webProfile).problems.isEmpty,
+                    "repository Web passing fixture clears static validation",
+                    &failures
+                )
+            } else {
+                failures.append("repository Web passing fixture was inspected")
+            }
+
+            if let failingInspection = inspections["WebFailing"] {
+                let failing = try await snapshotService.captureBundle(
+                    generation: 102,
+                    rootURL: fixtureRoot.appendingPathComponent("WebFailing", isDirectory: true),
+                    evaluation: failingInspection.evaluation
+                )
+                expect(
+                    WebWorkspaceRunner.validate(snapshot: failing, profile: webProfile).problems.contains {
+                        $0.category == .configuration
+                    },
+                    "repository Web failing fixture blocks a missing local resource",
+                    &failures
+                )
+            } else {
+                failures.append("repository Web failing fixture was inspected")
+            }
+
+            if let swiftInspection = inspections["SwiftCheck"] {
+                let swiftSnapshot = try await snapshotService.captureBundle(
+                    generation: 103,
+                    rootURL: fixtureRoot.appendingPathComponent("SwiftCheck", isDirectory: true),
+                    evaluation: swiftInspection.evaluation
+                )
+                let advice = SwiftWorkspaceAdvisor().inspect(snapshot: swiftSnapshot)
+                expect(
+                    advice.problems.isEmpty && !advice.canRunLocally,
+                    "repository Swift fixture is check-only with no local compile claim",
+                    &failures
+                )
+            } else {
+                failures.append("repository Swift fixture was inspected")
+            }
+        } catch {
+            failures.append("repository workspace fixtures execute through real inventory and validation services")
+        }
     }
 
     private static func checkLocalShellWorkspaceActions(_ failures: inout [String]) async {
