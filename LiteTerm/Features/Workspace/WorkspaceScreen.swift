@@ -113,6 +113,10 @@ struct WorkspaceScreen: View {
     private func controls(landscape: Bool) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
+                Label("Lightweight Local Workspace", systemImage: "ipad.and.arrow.forward")
+                    .font(.caption.weight(.semibold))
+                    .accessibilityIdentifier("Lightweight local workspace")
+
                 Menu {
                     Button("App Documents", action: model.useAppDocuments)
                     Button("Choose Folder…", action: model.chooseExternalFolder)

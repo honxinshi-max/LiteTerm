@@ -6,9 +6,10 @@ final class WorkspaceFlowUITests: XCTestCase {
         app.launchArguments.append("-ui-testing-workspace")
         app.launch()
 
-        app.tabBars.buttons["Workspace"].tap()
+        app.tabBars.buttons["Local Workspace"].tap()
 
         XCTAssertTrue(app.otherElements["Workspace screen"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Lightweight Local Workspace"].exists)
         XCTAssertTrue(app.buttons["Workspace check"].exists)
         XCTAssertTrue(app.buttons["Workspace test"].exists)
         XCTAssertTrue(app.buttons["Workspace run"].exists)
@@ -28,7 +29,7 @@ final class WorkspaceFlowUITests: XCTestCase {
         app.launchArguments.append("-ui-testing-workspace")
         XCUIDevice.shared.orientation = .portrait
         app.launch()
-        app.tabBars.buttons["Workspace"].tap()
+        app.tabBars.buttons["Local Workspace"].tap()
 
         XCTAssertTrue(app.buttons["Workspace files"].waitForExistence(timeout: 3))
         app.buttons["Workspace files"].tap()

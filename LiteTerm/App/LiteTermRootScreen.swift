@@ -28,7 +28,7 @@ struct LiteTermRootScreen: View {
                     Color.clear
                 }
             }
-            .tabItem { Label("Workspace", systemImage: "chevron.left.forwardslash.chevron.right") }
+            .tabItem { Label("Local Workspace", systemImage: "chevron.left.forwardslash.chevron.right") }
             .tag(LiteTermSurface.workspace)
         }
         .onChange(of: selection, initial: true) { _, surface in
