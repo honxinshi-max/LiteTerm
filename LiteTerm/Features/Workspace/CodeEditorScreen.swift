@@ -5,8 +5,10 @@ struct CodeEditorScreen: View {
     let rootURL: URL
     let relativePath: String?
     let onSaved: () -> Void
+    @Binding var hasUnsavedChanges: Bool
 
     @State private var text = ""
+    @State private var savedText = ""
     @State private var isLoading = false
     @State private var isSaving = false
     @State private var isLoaded = false
@@ -58,6 +60,11 @@ struct CodeEditorScreen: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("Workspace editor column")
         .task(id: relativePath) { await load() }
+        .onChange(of: text) { _, newValue in
+            if isLoaded {
+                hasUnsavedChanges = newValue != savedText
+            }
+        }
         .alert("Unable to edit source", isPresented: errorBinding) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -83,6 +90,8 @@ struct CodeEditorScreen: View {
     @MainActor
     private func load() async {
         text = ""
+        savedText = ""
+        hasUnsavedChanges = false
         isLoaded = false
         guard let sourceURL = sourceURL() else {
             isLoading = false
@@ -90,9 +99,11 @@ struct CodeEditorScreen: View {
         }
         isLoading = true
         do {
-            text = try await Task.detached {
+            let loadedText = try await Task.detached {
                 try CoordinatedFileAccess.readText(from: sourceURL, inside: rootURL)
             }.value
+            text = loadedText
+            savedText = loadedText
             isLoaded = true
         } catch {
             errorMessage = error.localizedDescription
@@ -109,6 +120,8 @@ struct CodeEditorScreen: View {
                 try await Task.detached {
                     try CoordinatedFileAccess.writeText(draft, to: sourceURL, inside: rootURL)
                 }.value
+                savedText = draft
+                hasUnsavedChanges = false
                 isSaving = false
                 onSaved()
             } catch {

@@ -21,6 +21,27 @@ final class WorkspaceControllerTests: XCTestCase {
         XCTAssertEqual(controller.presentation.state, .idle)
     }
 
+    func testExternalSourceMutationWithdrawsReadyPort() async throws {
+        let root = try makeRoot(files: [
+            "index.html": "<h1>Ready</h1>"
+        ])
+        let controller = WorkspaceController(rootURL: root)
+
+        controller.perform(.run)
+        try await waitUntil { controller.presentation.publishedPort != nil }
+
+        try Data("<h1>Externally changed</h1>".utf8).write(
+            to: root.appendingPathComponent("index.html"),
+            options: .atomic
+        )
+        try await waitUntil {
+            controller.presentation.publishedPort == nil
+                && controller.presentation.state == .failed
+        }
+
+        XCTAssertTrue(controller.presentation.problems.contains { $0.category == .fileAccess })
+    }
+
     func testSwiftNeverPublishesPortAndOffersHandoff() async throws {
         let root = try makeRoot(files: [
             "main.swift": "func run() {}"

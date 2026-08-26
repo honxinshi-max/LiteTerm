@@ -8,6 +8,11 @@ public struct WorkspaceControllerServices: @unchecked Sendable {
         URL,
         WorkspaceInventoryEvaluation
     ) async throws -> WorkspaceCapturedSnapshot
+    public var snapshotIsCurrent: @Sendable (
+        WorkspaceCapturedSnapshot,
+        URL,
+        WorkspaceKind
+    ) async throws -> Bool
     public var validateWeb: @Sendable (
         WorkspaceCapturedSnapshot,
         WorkspaceProfile
@@ -43,6 +48,11 @@ public struct WorkspaceControllerServices: @unchecked Sendable {
             URL,
             WorkspaceInventoryEvaluation
         ) async throws -> WorkspaceCapturedSnapshot,
+        snapshotIsCurrent: @escaping @Sendable (
+            WorkspaceCapturedSnapshot,
+            URL,
+            WorkspaceKind
+        ) async throws -> Bool,
         validateWeb: @escaping @Sendable (
             WorkspaceCapturedSnapshot,
             WorkspaceProfile
@@ -73,6 +83,7 @@ public struct WorkspaceControllerServices: @unchecked Sendable {
     ) {
         self.inspect = inspect
         self.capture = capture
+        self.snapshotIsCurrent = snapshotIsCurrent
         self.validateWeb = validateWeb
         self.smokeWeb = smokeWeb
         self.inspectSwift = inspectSwift
@@ -101,6 +112,15 @@ public struct WorkspaceControllerServices: @unchecked Sendable {
                     generation: generation,
                     rootURL: rootURL,
                     evaluation: evaluation
+                )
+            },
+            snapshotIsCurrent: { expected, rootURL, expectedKind in
+                let current = try await inventory.inspect(rootURL: rootURL)
+                guard current.classification.kind == expectedKind else { return false }
+                return try await snapshots.matchesCurrentFiles(
+                    expected,
+                    rootURL: rootURL,
+                    evaluation: current.evaluation
                 )
             },
             validateWeb: { snapshot, profile in

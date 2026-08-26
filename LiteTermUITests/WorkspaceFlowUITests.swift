@@ -39,4 +39,27 @@ final class WorkspaceFlowUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(app.otherElements["Workspace editor column"].waitForExistence(timeout: 3))
     }
+
+    func testUnsavedDraftRequiresExplicitDiscardBeforeLeavingWorkspace() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-workspace"]
+        app.launch()
+
+        app.tabBars.buttons["Local Workspace"].tap()
+        XCTAssertTrue(app.otherElements["Workspace file browser"].waitForExistence(timeout: 3))
+        app.buttons["index.html"].tap()
+
+        let editor = app.textViews["Workspace code editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 3))
+        editor.tap()
+        editor.typeText(" unsaved")
+
+        app.buttons["style.css"].tap()
+        XCTAssertTrue(app.buttons["Discard Changes"].waitForExistence(timeout: 2))
+        app.buttons["Keep Editing"].tap()
+        XCTAssertTrue(editor.exists)
+
+        app.tabBars.buttons["Terminal"].tap()
+        XCTAssertTrue(app.alerts["Discard unsaved workspace changes?"].waitForExistence(timeout: 2))
+    }
 }

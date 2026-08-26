@@ -2,6 +2,12 @@ import LiteTermCore
 import SwiftUI
 
 struct WorkspaceScreen: View {
+    private enum PendingDiscardAction {
+        case selectFile(String)
+        case useAppDocuments
+        case chooseFolder
+    }
+
     @ObservedObject var model: AppModel
     @ObservedObject private var controller: WorkspaceController
 
@@ -10,6 +16,7 @@ struct WorkspaceScreen: View {
     @State private var isShowingBrowserSheet = false
     @State private var isShowingPreview = true
     @State private var browserRefreshID: UInt64 = 0
+    @State private var pendingDiscardAction: PendingDiscardAction?
 
     init(model: AppModel) {
         self.model = model
@@ -37,7 +44,7 @@ struct WorkspaceScreen: View {
                 NavigationStack {
                     WorkspaceFileBrowser(
                         rootURL: model.activeWorkspaceURL,
-                        selectedPath: $selectedPath,
+                        selectedPath: guardedFileSelection,
                         refreshID: browserRefreshID
                     )
                     .navigationTitle("Workspace Files")
@@ -61,8 +68,15 @@ struct WorkspaceScreen: View {
         } message: {
             Text(model.authorizationErrorMessage ?? "Folder authorization failed.")
         }
+        .confirmationDialog("Discard unsaved workspace changes?", isPresented: discardAlertBinding) {
+            Button("Keep Editing", role: .cancel) { pendingDiscardAction = nil }
+            Button("Discard Changes", role: .destructive) { performPendingDiscardAction() }
+        } message: {
+            Text("Save the current file first, or discard the in-memory draft before changing files or folders.")
+        }
         .onAppear { model.mode = .local }
         .onChange(of: model.activeWorkspaceName) { _, _ in
+            model.workspaceHasUnsavedChanges = false
             selectedPath = nil
             browserRefreshID &+= 1
             isShowingPreview = true
@@ -76,7 +90,7 @@ struct WorkspaceScreen: View {
                 if isShowingBrowser {
                     WorkspaceFileBrowser(
                         rootURL: model.activeWorkspaceURL,
-                        selectedPath: $selectedPath,
+                        selectedPath: guardedFileSelection,
                         refreshID: browserRefreshID
                     )
                     .frame(width: 260)
@@ -85,7 +99,8 @@ struct WorkspaceScreen: View {
                 CodeEditorScreen(
                     rootURL: model.activeWorkspaceURL,
                     relativePath: selectedPath,
-                    onSaved: sourceSaved
+                    onSaved: sourceSaved,
+                    hasUnsavedChanges: $model.workspaceHasUnsavedChanges
                 )
                 .frame(minWidth: 320)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -99,7 +114,8 @@ struct WorkspaceScreen: View {
                 CodeEditorScreen(
                     rootURL: model.activeWorkspaceURL,
                     relativePath: selectedPath,
-                    onSaved: sourceSaved
+                    onSaved: sourceSaved,
+                    hasUnsavedChanges: $model.workspaceHasUnsavedChanges
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 if isShowingPreview, controller.presentation.previewAvailable {
@@ -118,8 +134,8 @@ struct WorkspaceScreen: View {
                     .accessibilityIdentifier("Lightweight local workspace")
 
                 Menu {
-                    Button("App Documents", action: model.useAppDocuments)
-                    Button("Choose Folder…", action: model.chooseExternalFolder)
+                    Button("App Documents") { request(.useAppDocuments) }
+                    Button("Choose Folder…") { request(.chooseFolder) }
                 } label: {
                     Label(model.activeWorkspaceName, systemImage: "folder")
                         .lineLimit(1)
@@ -237,6 +253,49 @@ struct WorkspaceScreen: View {
             get: { model.authorizationErrorMessage != nil },
             set: { if !$0 { model.authorizationErrorMessage = nil } }
         )
+    }
+
+    private var guardedFileSelection: Binding<String?> {
+        Binding(
+            get: { selectedPath },
+            set: { requestedPath in
+                guard let requestedPath, requestedPath != selectedPath else { return }
+                request(.selectFile(requestedPath))
+            }
+        )
+    }
+
+    private var discardAlertBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDiscardAction != nil },
+            set: { if !$0 { pendingDiscardAction = nil } }
+        )
+    }
+
+    private func request(_ action: PendingDiscardAction) {
+        if model.workspaceHasUnsavedChanges {
+            pendingDiscardAction = action
+        } else {
+            perform(action)
+        }
+    }
+
+    private func performPendingDiscardAction() {
+        guard let action = pendingDiscardAction else { return }
+        pendingDiscardAction = nil
+        model.workspaceHasUnsavedChanges = false
+        perform(action)
+    }
+
+    private func perform(_ action: PendingDiscardAction) {
+        switch action {
+        case let .selectFile(path):
+            selectedPath = path
+        case .useAppDocuments:
+            model.useAppDocuments()
+        case .chooseFolder:
+            model.chooseExternalFolder()
+        }
     }
 
     private func sourceSaved() {

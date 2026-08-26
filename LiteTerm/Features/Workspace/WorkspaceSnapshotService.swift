@@ -96,6 +96,39 @@ public actor WorkspaceSnapshotService {
         )
     }
 
+    public func matchesCurrentFiles(
+        _ expected: WorkspaceCapturedSnapshot,
+        rootURL: URL,
+        evaluation: WorkspaceInventoryEvaluation
+    ) throws -> Bool {
+        guard evaluation.violations.isEmpty else { return false }
+        let expectedEntries = expected.snapshot.entries
+        let currentEntries = evaluation.acceptedFiles
+        guard expectedEntries.count == currentEntries.count else { return false }
+
+        for (expectedEntry, currentEntry) in zip(expectedEntries, currentEntries) {
+            guard
+                expectedEntry.relativePath == currentEntry.relativePath,
+                expectedEntry.byteCount == currentEntry.byteCount
+            else {
+                return false
+            }
+            let requestedURL = currentEntry.relativePath
+                .split(separator: "/")
+                .reduce(rootURL) { $0.appendingPathComponent(String($1)) }
+            let matches = try WorkspaceCoordinatedRead.perform(at: requestedURL) {
+                coordinatedURL in
+                try Self.metadataMatches(
+                    expectedEntry,
+                    coordinatedURL: coordinatedURL,
+                    rootURL: rootURL
+                )
+            }
+            guard matches else { return false }
+        }
+        return true
+    }
+
     private struct CapturedEntry {
         let snapshotEntry: WorkspaceSnapshotEntry
         let content: Data
@@ -163,6 +196,33 @@ public actor WorkspaceSnapshotService {
                 sha256: Data(hasher.finalize())
             ),
             content: content
+        )
+    }
+
+    private static func metadataMatches(
+        _ expected: WorkspaceSnapshotEntry,
+        coordinatedURL: URL,
+        rootURL: URL
+    ) throws -> Bool {
+        guard WorkspaceFilePath.isContained(coordinatedURL, inside: rootURL) else {
+            return false
+        }
+        let values = try coordinatedURL.resourceValues(forKeys: [
+            .isRegularFileKey,
+            .fileSizeKey,
+            .contentModificationDateKey
+        ])
+        guard values.isRegularFile == true,
+              values.fileSize == expected.byteCount else {
+            return false
+        }
+        return modificationNanoseconds(values.contentModificationDate)
+            == expected.modifiedAtNanoseconds
+    }
+
+    private static func modificationNanoseconds(_ date: Date?) -> Int64 {
+        Int64(
+            ((date ?? .distantPast).timeIntervalSince1970 * 1_000_000_000).rounded()
         )
     }
 

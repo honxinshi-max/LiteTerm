@@ -908,6 +908,20 @@ struct LiteTermCoreTestRunner {
                 "workspace controller publishes a Web port only after Ready",
                 &failures
             )
+            try Data("<h1>Externally changed</h1>".utf8)
+                .write(to: webRoot.appendingPathComponent("index.html"), options: .atomic)
+            let externalMutationWithdrawn = await waitForWorkspaceState(
+                controller,
+                timeout: .seconds(5)
+            ) {
+                $0.presentation.publishedPort == nil
+                    && $0.presentation.state == .failed
+            }
+            expect(
+                externalMutationWithdrawn,
+                "workspace controller withdraws its port after an external source mutation",
+                &failures
+            )
             await controller.sourceDidChange()
             expect(
                 controller.presentation.publishedPort == nil

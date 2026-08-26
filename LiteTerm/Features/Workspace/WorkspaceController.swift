@@ -101,8 +101,8 @@ public final class WorkspaceController: ObservableObject {
         _ = gate.invalidate()
         currentLease = nil
         previewBootstrapURL = nil
-        await services.stopServer()
         publish(statusOverride: "Idle")
+        await services.stopServer()
         finishTerminalRequestIfNeeded()
     }
 
@@ -418,6 +418,7 @@ public final class WorkspaceController: ObservableObject {
             await monitorHealth(
                 lease: lease,
                 healthPath: profile.healthPath,
+                snapshot: snapshot,
                 generation: generation,
                 operationID: operationID
             )
@@ -438,12 +439,31 @@ public final class WorkspaceController: ObservableObject {
     private func monitorHealth(
         lease: LoopbackServerLease,
         healthPath: String,
+        snapshot: WorkspaceCapturedSnapshot,
         generation: UInt64,
         operationID: UUID
     ) async {
         while isCurrent(operationID, generation: generation), !Task.isCancelled {
             do {
                 try await Task.sleep(for: .seconds(2))
+                guard try await services.snapshotIsCurrent(snapshot, rootURL, .web) else {
+                    currentLease = nil
+                    previewBootstrapURL = nil
+                    _ = gate.reduce(
+                        .failed(.runtime),
+                        generation: generation,
+                        now: services.now()
+                    )
+                    problems = Self.genericProblem(
+                        category: .fileAccess,
+                        stage: .runtime,
+                        message: "The source snapshot changed while the service was running."
+                    ).map { [$0] } ?? []
+                    publish()
+                    await services.stopServer()
+                    finishTerminalRequestIfNeeded()
+                    return
+                }
                 let result = try await services.verifyHealth(lease, healthPath)
                 guard result.generation == generation,
                       isCurrent(operationID, generation: generation),
@@ -467,13 +487,13 @@ public final class WorkspaceController: ObservableObject {
                     generation: generation,
                     now: services.now()
                 )
-                await services.stopServer()
                 problems = Self.genericProblem(
                     category: .health,
                     stage: .health,
                     message: "The verified service stopped responding."
                 ).map { [$0] } ?? []
                 publish()
+                await services.stopServer()
                 finishTerminalRequestIfNeeded()
                 return
             }
@@ -492,7 +512,6 @@ public final class WorkspaceController: ObservableObject {
         currentLease = nil
         previewBootstrapURL = nil
         _ = gate.reduce(.failed(failure), generation: generation, now: services.now())
-        await services.stopServer()
         if !existingProblems.isEmpty {
             problems = Array(existingProblems.prefix(100))
         } else if let problemCategory, let message {
@@ -503,6 +522,7 @@ public final class WorkspaceController: ObservableObject {
             ).map { [$0] } ?? []
         }
         publish()
+        await services.stopServer()
         finishTerminalRequestIfNeeded()
     }
 
@@ -510,9 +530,9 @@ public final class WorkspaceController: ObservableObject {
         _ = gate.invalidate()
         currentLease = nil
         previewBootstrapURL = nil
+        if shouldPublish { publish(statusOverride: "Idle") }
         await services.cancelPython()
         await services.stopServer()
-        if shouldPublish { publish(statusOverride: "Idle") }
     }
 
     private func isCurrent(_ requestedOperationID: UUID, generation: UInt64) -> Bool {

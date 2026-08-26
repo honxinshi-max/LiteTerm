@@ -27,6 +27,7 @@ final class AppModel: ObservableObject {
     @Published var editorDocument: EditorDocument?
     @Published var deletionConfirmationRequest: DeletionConfirmationRequest?
     @Published var authorizationErrorMessage: String?
+    @Published var workspaceHasUnsavedChanges = false
     @Published private(set) var activeWorkspaceName: String
 
     let folderAuthorizationStore: FolderAuthorizationStore
@@ -117,6 +118,13 @@ final class AppModel: ObservableObject {
                     options: .atomic
                 )
             }
+            let styleFixtureURL = authorizationStore.documentsURL.appendingPathComponent("style.css")
+            if !FileManager.default.fileExists(atPath: styleFixtureURL.path) {
+                try? Data("body { color: white; }".utf8).write(
+                    to: styleFixtureURL,
+                    options: .atomic
+                )
+            }
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-open-editor") {
             let testURL = authorizationStore.documentsURL.appendingPathComponent("UITestEditor.txt")
@@ -196,6 +204,7 @@ final class AppModel: ObservableObject {
         do {
             let root = try folderAuthorizationStore.select(url: url)
             await workspaceController.installRoot(root)
+            workspaceHasUnsavedChanges = false
             terminalSession.installLocalRoot(
                 root,
                 coordinateFileAccess: root.standardizedFileURL != folderAuthorizationStore.documentsURL.standardizedFileURL
@@ -205,6 +214,7 @@ final class AppModel: ObservableObject {
         } catch {
             let reconciledRoot = folderAuthorizationStore.activeRootURL
             await workspaceController.installRoot(reconciledRoot)
+            workspaceHasUnsavedChanges = false
             terminalSession.installLocalRoot(
                 reconciledRoot,
                 coordinateFileAccess: reconciledRoot.standardizedFileURL
@@ -219,6 +229,7 @@ final class AppModel: ObservableObject {
         await terminalSession.suspendLocalInputAndDrain()
         defer { terminalSession.resumeLocalInput() }
         await workspaceController.installRoot(folderAuthorizationStore.documentsURL)
+        workspaceHasUnsavedChanges = false
         if clearBookmark {
             folderAuthorizationStore.useAppDocuments()
         } else {
@@ -241,6 +252,7 @@ final class AppModel: ObservableObject {
             activeWorkspaceName = root.lastPathComponent
         } catch {
             await workspaceController.installRoot(folderAuthorizationStore.documentsURL)
+            workspaceHasUnsavedChanges = false
             terminalSession.installLocalRoot(folderAuthorizationStore.documentsURL)
             activeWorkspaceName = folderAuthorizationStore.documentsURL.lastPathComponent
             authorizationErrorMessage = error.localizedDescription
