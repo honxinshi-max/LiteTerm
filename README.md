@@ -1,10 +1,12 @@
-# LiteTerm
+# LiteSpace
 
 > iPad-first 轻量终端 = 轻量本地工作区 + 本地文件 Shell + 强 SSH 远程终端
 
-LiteTerm 是专为 iPad 设计的轻量终端与本地编程工作区。它不模拟完整 Linux/macOS，也不追求 GitHub Codespaces 或桌面 IDE 的兼容范围。当前候选实现可自动识别静态 Web、Python 与 Swift 项目：Web 使用系统 WebKit 和应用自有回环服务；Swift 只做明确标注的轻量诊断并交接 Swift Playgrounds；Python 只有在经过验证的官方 CPython iOS 产物、模拟器和实体设备门全部通过后才会启用。Node/npm、本地 Git、任意 shell、Docker、虚拟机、包管理器、Codex 与 Hermes 仍由用户主动连接的远程 SSH 环境承担。
+LiteSpace 是专为 iPad 设计的轻量终端与本地编程工作区。它不模拟完整 Linux/macOS，也不追求 GitHub Codespaces 或桌面 IDE 的兼容范围。当前候选实现可自动识别静态 Web、Python 与 Swift 项目：Web 使用系统 WebKit 和应用自有回环服务；Swift 只做明确标注的轻量诊断并交接 Swift Playgrounds；Python 只有在经过验证的官方 CPython iOS 产物、模拟器和实体设备门全部通过后才会启用。Node/npm、本地 Git、任意 shell、Docker、虚拟机、包管理器、Codex 与 Hermes 仍由用户主动连接的远程 SSH 环境承担。
 
 当前状态：**V0.2 轻量本地工作区候选版本**。52 项可移植行为检查、真实本机回环服务、SSH 回环、工程结构和源码级隐私门已通过。完整 Xcode/iPad Simulator、CPython XCFramework、实体 iPad 资源与生命周期、真实 SSH、Release Archive 隐私报告及 App Review 仍未完成，因此这不是 App Store 成品，也不是全部三类项目已在 iPad 上通过的 release。
+
+名称迁移边界：当前候选源码、模块、target、scheme、bundle、Keychain 和偏好命名空间已统一为 LiteSpace。由于候选 bundle identifier 与持久化命名空间同步更新，旧候选安装不会被覆盖或自动继承 Host 密钥、文件夹授权和工作区 profile；升级测试时需要重新配置这些本地数据。这一边界不代表任何用户数据已被仓库操作删除。
 
 ## 当前功能
 
@@ -49,22 +51,22 @@ pwd  ls  cd  cat  mkdir  touch  cp  mv  rm  clear  edit
 
 可访问范围只有：
 
-- LiteTerm 的 App Documents 沙盒目录
+- LiteSpace 的 App Documents 沙盒目录
 - 用户通过 iPadOS 系统文件夹选择器明确授权的 Files/iCloud Drive 目录
 
-外部目录使用 security-scoped bookmark 和协调式文件访问。LiteTerm 不绕过 Sandbox，不扫描或扩大授权范围。目录授权失效时会回退到 App Documents，并要求用户重新选择。
+外部目录使用 security-scoped bookmark 和协调式文件访问。LiteSpace 不绕过 Sandbox，不扫描或扩大授权范围。目录授权失效时会回退到 App Documents，并要求用户重新选择。
 
 ### SSH
 
 - 保存多个 Host：名称、IP/hostname、端口、用户名和认证方式
 - 密码认证
-- LiteTerm 在设备内生成的 Ed25519 密钥认证
+- LiteSpace 在设备内生成的 Ed25519 密钥认证
 - Connect、Disconnect、终端尺寸同步和真正的交互式 `xterm-256color` PTY Shell
 - 前台网络中断后有限重连：最多 3 次，间隔 1、2、4 秒
 - 首次连接明确确认服务器 SHA-256 指纹；服务器密钥变化时硬失败，必须由用户重新确认
 - 远端 Shell 正常结束时先交付末尾输出再关闭会话；界面将其与网络故障区分，并提供显式重试入口
 
-V0.1 **不导入任意 PEM/RSA/加密私钥**。这是对“SSH Key”范围的有意收窄，可降低解析器、密码学兼容和密钥迁移风险。远程机器已有的 Git、Python、npm、Codex、Hermes 等 CLI 可以在 SSH Shell 中正常使用。LiteTerm 的本地工作区只实现上文明确列出的轻量能力，不把这些远程工具嵌入 App。
+V0.1 **不导入任意 PEM/RSA/加密私钥**。这是对“SSH Key”范围的有意收窄，可降低解析器、密码学兼容和密钥迁移风险。远程机器已有的 Git、Python、npm、Codex、Hermes 等 CLI 可以在 SSH Shell 中正常使用。LiteSpace 的本地工作区只实现上文明确列出的轻量能力，不把这些远程工具嵌入 App。
 
 ### 文件访问
 
@@ -77,11 +79,11 @@ SFTP 和“远程文件保存到 iPad”不属于 V0.1，但 SSH 与文件访问
 
 ## 最小架构
 
-LiteTerm 保留三个边界清楚的产品层：
+LiteSpace 保留三个边界清楚的产品层：
 
-- `LiteTermCore`：纯 Foundation 核心，负责 Local 命令、路径约束、工作区分类/检查/状态门/资源预算，以及 SSH 策略和 Local → SSH → Local 流程。
-- `LiteTerm`：iPad App 层，负责 SwiftUI/UIKit、SwiftTerm、Files 授权、工作区控制与 Web 回环服务、Keychain，以及 SwiftNIO SSH over Network.framework。
-- `LiteTermPythonBridge`：默认失败关闭的 Objective-C 边界；只有经过固定版本、哈希、架构、符号和隐私核验的 CPython iOS XCFramework 存在时才允许编译进目标。
+- `LiteSpaceCore`：纯 Foundation 核心，负责 Local 命令、路径约束、工作区分类/检查/状态门/资源预算，以及 SSH 策略和 Local → SSH → Local 流程。
+- `LiteSpace`：iPad App 层，负责 SwiftUI/UIKit、SwiftTerm、Files 授权、工作区控制与 Web 回环服务、Keychain，以及 SwiftNIO SSH over Network.framework。
+- `LiteSpacePythonBridge`：默认失败关闭的 Objective-C 边界；只有经过固定版本、哈希、架构、符号和隐私核验的 CPython iOS XCFramework 存在时才允许编译进目标。
 
 | 模块 | 职责 |
 | --- | --- |
@@ -98,19 +100,19 @@ LiteTerm 保留三个边界清楚的产品层：
 ## 项目目录
 
 ```text
-LiteTerm/
-├── LiteTerm/                         # SwiftUI iPad App
+LiteSpace/
+├── LiteSpace/                         # SwiftUI iPad App
 │   ├── App/                          # App 入口和生命周期
 │   ├── Features/                     # Terminal、Local、SSH、Hosts、Files UI
 │   ├── Infrastructure/               # Keychain、Files、SSH 实现
 │   └── Resources/                    # Info.plist、Privacy、AppIcon、许可证资源
 ├── Sources/
-│   ├── LiteTermCore/                 # 可独立测试的核心逻辑
-│   └── LiteTermWorkspaceSupport/     # 可移植 Web/HTTP 支撑层
-├── LiteTermPythonBridge/             # 受门控的 CPython 桥接目标
+│   ├── LiteSpaceCore/                 # 可独立测试的核心逻辑
+│   └── LiteSpaceWorkspaceSupport/     # 可移植 Web/HTTP 支撑层
+├── LiteSpacePythonBridge/             # 受门控的 CPython 桥接目标
 ├── Vendor/CPython/                   # 固定源码元数据；不含已启用二进制
 ├── Tests/                            # Core、Workspace、Python、SSH 与 UI 测试
-├── LiteTerm.xcodeproj/               # 可直接由 Xcode 打开的项目
+├── LiteSpace.xcodeproj/               # 可直接由 Xcode 打开的项目
 ├── docs/                             # 产品边界、设计、计划与分层验收证据
 ├── scripts/                          # 可移植构建和项目验证脚本
 ├── Package.swift                     # Core 的 SwiftPM 可移植入口
@@ -168,20 +170,20 @@ MIT 与 Apache-2.0 均允许商业 App 使用，但分发时必须保留相应�
 ## 获取、构建与安装
 
 ```sh
-git clone https://github.com/honxinshi-max/LiteTerm.git
-cd LiteTerm
-open LiteTerm.xcodeproj
+git clone <从当前 GitHub 仓库页面复制的 URL> LiteSpace
+cd LiteSpace
+open LiteSpace.xcodeproj
 ```
 
 GitHub 中的是**源代码，不是可在 iPad“文件”App 中启用的程序**。iPadOS 不能直接编译、签名或执行这些 Swift 文件。安装到 iPad 的正确路径是：
 
 1. 在 Mac 安装完整 Xcode，并登录 Apple Account。
-2. 打开 `LiteTerm.xcodeproj`。
+2. 打开 `LiteSpace.xcodeproj`。
 3. 在 Signing & Capabilities 中选择 Development Team，并设置唯一 Bundle Identifier。
 4. 连接 iPad，选择该 iPad 作为运行目标。
 5. 使用 Product → Run 构建、签名并安装。
 
-需要持续分发时，应创建 Release Archive，上传 App Store Connect，再通过 TestFlight 安装。仅把仓库下载到 iPad Files/iCloud Drive 并不能运行 LiteTerm。
+需要持续分发时，应创建 Release Archive，上传 App Store Connect，再通过 TestFlight 安装。仅把仓库下载到 iPad Files/iCloud Drive 并不能运行 LiteSpace。
 
 ## 验证
 
@@ -196,16 +198,16 @@ swift build
 ./scripts/verify-project.sh
 git diff --check
 /usr/bin/plutil -lint \
-  LiteTerm/Resources/Info.plist \
-  LiteTerm/Resources/PrivacyInfo.xcprivacy \
-  Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy \
-  LiteTerm.xcodeproj/project.pbxproj
+  LiteSpace/Resources/Info.plist \
+  LiteSpace/Resources/PrivacyInfo.xcprivacy \
+  Sources/LiteSpaceCore/Resources/PrivacyInfo.xcprivacy \
+  LiteSpace.xcodeproj/project.pbxproj
 ```
 
-当前可移植验证运行 52 项 `LiteTermCore` 检查，覆盖工作区识别、Web 真实回环、三次健康检查、端口租约、编辑失效、陈旧代回调、资源上限、Python 失败关闭、Swift 诊断边界和合成项目夹具；同时启动进程内真实 SwiftNIO SSH 环回服务器，并核验工程结构、依赖锁、target membership、AppIcon、Privacy Manifest 与源码级隐私边界。可移植通过不替代完整 Xcode、iPad Simulator、CPython iOS 产物、实体 iPad、外部 OpenSSH 或 Release Archive 验收。若环境提供真实 XCTest，可补充运行：
+当前可移植验证运行 52 项 `LiteSpaceCore` 检查，覆盖工作区识别、Web 真实回环、三次健康检查、端口租约、编辑失效、陈旧代回调、资源上限、Python 失败关闭、Swift 诊断边界和合成项目夹具；同时启动进程内真实 SwiftNIO SSH 环回服务器，并核验工程结构、依赖锁、target membership、AppIcon、Privacy Manifest 与源码级隐私边界。可移植通过不替代完整 Xcode、iPad Simulator、CPython iOS 产物、实体 iPad、外部 OpenSSH 或 Release Archive 验收。若环境提供真实 XCTest，可补充运行：
 
 ```sh
-LITETERM_ENABLE_SWIFTPM_XCTESTS=1 swift test
+LITESPACE_ENABLE_SWIFTPM_XCTESTS=1 swift test
 ```
 
 证据和未关闭边界分别记录在：
@@ -221,7 +223,7 @@ LITETERM_ENABLE_SWIFTPM_XCTESTS=1 swift test
 
 实体 iPad 最终必须对 Web、Python 和 Swift 的适用边界分别完成以下闭环：
 
-1. 打开 LiteTerm。
+1. 打开 LiteSpace。
 2. 不使用实体键盘，从 Files 选择项目目录并进入 `Local Workspace`。
 3. 确认项目类型、支持状态、原因与建议动作可见；混合项目由用户显式选择 session profile。
 4. 编辑源码并运行 Check；失败时确认 Problems 可定位且 Ports 为空。

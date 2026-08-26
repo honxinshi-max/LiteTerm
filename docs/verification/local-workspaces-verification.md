@@ -31,7 +31,7 @@ No source, filename, full path, command, runtime output, credential, network des
 | Swift diagnostics boundary | PASS | Swift fixture and advisor checks label the result `Lightweight diagnostics`, expose an explicit Playgrounds handoff, and publish no port. | No local Swift compilation claim. |
 | Privacy/static capability scan | PASS | `scripts/verify-workspace-privacy.sh` found no unreviewed process, dynamic-loading, background, cloud, telemetry, public-listener, content-logging, host-path, or tracked-artifact capability. | Archive privacy report and App Store questionnaire remain open. |
 | Existing SSH loopback regression | PASS | `scripts/verify-project.sh` retained the real SwiftNIO SSH integration pass. | External OpenSSH and physical-iPad SSH remain separate V0.1 gates. |
-| SwiftPM XCTest opt-in | OPEN | `LITETERM_ENABLE_SWIFTPM_XCTESTS=1 swift test --disable-sandbox` reached the real test target and failed because this Command Line Tools installation has no `XCTest` module. | Re-run with full Xcode selected; this open environment is not converted into a pass. |
+| SwiftPM XCTest opt-in | OPEN | `LITESPACE_ENABLE_SWIFTPM_XCTESTS=1 swift test --disable-sandbox` reached the real test target and failed because this Command Line Tools installation has no `XCTest` module. | Re-run with full Xcode selected; this open environment is not converted into a pass. |
 | Full-Xcode iOS build and simulator suite | OPEN | `xcodebuild` is unavailable with the active Command Line Tools developer directory. | Must compile all targets and execute the named iPad Simulator tests from the resolved package graph. |
 | UI and WebKit runtime acceptance | OPEN | No iOS Simulator is available. | Landscape/portrait, keyboard, editor, Terminal/Problems/Ports, preview, mutation invalidation, VoiceOver, and Swift handoff UI are unexecuted. |
 
@@ -44,7 +44,7 @@ No source, filename, full path, command, runtime output, credential, network des
 | `./scripts/verify-workspace-privacy.sh` | PASS |
 | `./scripts/verify-local-workspaces.sh` | PASS with named OPEN/SKIP gates |
 | `./scripts/verify-project.sh` | PASS portable candidate; not a release pass |
-| `LITETERM_ENABLE_SWIFTPM_XCTESTS=1 swift test --disable-sandbox` | OPEN environment: `XCTest` module unavailable |
+| `LITESPACE_ENABLE_SWIFTPM_XCTESTS=1 swift test --disable-sandbox` | OPEN environment: `XCTest` module unavailable |
 
 ## Next evidence
 

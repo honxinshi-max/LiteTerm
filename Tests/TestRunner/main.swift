@@ -1,11 +1,11 @@
 import Darwin
 import Foundation
-import LiteTermCore
-import LiteTermPythonBridge
-import LiteTermWorkspaceSupport
+import LiteSpaceCore
+import LiteSpacePythonBridge
+import LiteSpaceWorkspaceSupport
 
 @main
-struct LiteTermCoreTestRunner {
+struct LiteSpaceCoreTestRunner {
     static func main() async {
         var failures: [String] = []
 
@@ -331,7 +331,7 @@ struct LiteTermCoreTestRunner {
 
     private static func checkLocalShellWorkspaceActions(_ failures: inout [String]) async {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LiteTerm-Runner-workspace-actions-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("LiteSpace-Runner-workspace-actions-\(UUID().uuidString)", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             let shell = LocalShell(rootURL: root)
@@ -654,14 +654,14 @@ struct LiteTermCoreTestRunner {
 
     private static func checkWorkspaceInventoryService(_ failures: inout [String]) async {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LiteTerm-Runner-inventory-service-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("LiteSpace-Runner-inventory-service-\(UUID().uuidString)", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             try Data("<h1>ready</h1>".utf8).write(to: root.appendingPathComponent("index.html"))
             try FileManager.default.createDirectory(at: root.appendingPathComponent(".git"), withIntermediateDirectories: true)
             try Data("private".utf8).write(to: root.appendingPathComponent(".git/config"))
             let outside = FileManager.default.temporaryDirectory
-                .appendingPathComponent("LiteTerm-Runner-inventory-outside-\(UUID().uuidString).py")
+                .appendingPathComponent("LiteSpace-Runner-inventory-outside-\(UUID().uuidString).py")
             try Data("private".utf8).write(to: outside)
             try FileManager.default.createSymbolicLink(
                 at: root.appendingPathComponent("escape.py"),
@@ -685,7 +685,7 @@ struct LiteTermCoreTestRunner {
 
     private static func checkWorkspaceSnapshotService(_ failures: inout [String]) async {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LiteTerm-Runner-snapshot-service-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("LiteSpace-Runner-snapshot-service-\(UUID().uuidString)", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             let fileURL = root.appendingPathComponent("main.py")
@@ -713,7 +713,7 @@ struct LiteTermCoreTestRunner {
 
     private static func checkWebWorkspaceValidation(_ failures: inout [String]) async {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LiteTerm-Runner-web-validation-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("LiteSpace-Runner-web-validation-\(UUID().uuidString)", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             let profile = try WorkspaceProfile(
@@ -859,7 +859,7 @@ struct LiteTermCoreTestRunner {
 
     private static func checkSwiftWorkspaceAdvisor(_ failures: inout [String]) async {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LiteTerm-Runner-swift-advisor-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("LiteSpace-Runner-swift-advisor-\(UUID().uuidString)", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             try Data("func run() {".utf8).write(to: root.appendingPathComponent("main.swift"))
@@ -893,7 +893,7 @@ struct LiteTermCoreTestRunner {
     @MainActor
     private static func checkWorkspaceController(_ failures: inout [String]) async {
         let webRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LiteTerm-Runner-controller-web-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("LiteSpace-Runner-controller-web-\(UUID().uuidString)", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: webRoot, withIntermediateDirectories: true)
             try Data("<h1>Ready</h1>".utf8)
@@ -931,7 +931,7 @@ struct LiteTermCoreTestRunner {
             )
 
             let swiftRoot = FileManager.default.temporaryDirectory
-                .appendingPathComponent("LiteTerm-Runner-controller-swift-\(UUID().uuidString)", isDirectory: true)
+                .appendingPathComponent("LiteSpace-Runner-controller-swift-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: swiftRoot, withIntermediateDirectories: true)
             try Data("func run() {}".utf8)
                 .write(to: swiftRoot.appendingPathComponent("main.swift"))
@@ -953,7 +953,7 @@ struct LiteTermCoreTestRunner {
             await swiftController.stopAndInvalidate()
 
             let pythonRoot = FileManager.default.temporaryDirectory
-                .appendingPathComponent("LiteTerm-Runner-controller-python-\(UUID().uuidString)", isDirectory: true)
+                .appendingPathComponent("LiteSpace-Runner-controller-python-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: pythonRoot, withIntermediateDirectories: true)
             try Data("print('private')".utf8)
                 .write(to: pythonRoot.appendingPathComponent("main.py"))
@@ -1009,7 +1009,7 @@ struct LiteTermCoreTestRunner {
 
     private static func checkPythonWorkspaceCapability(_ failures: inout [String]) async {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LiteTerm-Runner-python-capability-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("LiteSpace-Runner-python-capability-\(UUID().uuidString)", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             try Data("print('private')".utf8).write(to: root.appendingPathComponent("main.py"))
@@ -1050,7 +1050,7 @@ struct LiteTermCoreTestRunner {
                 headers: [
                     "Content-Type": "application/json",
                     "User-Agent": "private-device-detail",
-                    "X-LiteTerm-Run": "private-secret"
+                    "X-LiteSpace-Run": "private-secret"
                 ],
                 body: Data("{}".utf8)
             )
@@ -1108,7 +1108,7 @@ struct LiteTermCoreTestRunner {
     }
 
     private static func checkWorkspaceProfileStore(_ failures: inout [String]) async {
-        let namespace = "LiteTerm.Runner.Profile.\(UUID().uuidString)"
+        let namespace = "LiteSpace.Runner.Profile.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: namespace) else {
             failures.append("workspace profile runner creates an isolated preferences suite")
             return
@@ -1213,7 +1213,7 @@ struct LiteTermCoreTestRunner {
             var healthRequest = URLRequest(
                 url: try oversizedLease.authenticatedBootstrapURL(relativePath: "health")
             )
-            healthRequest.setValue("1", forHTTPHeaderField: "X-LiteTerm-Health")
+            healthRequest.setValue("1", forHTTPHeaderField: "X-LiteSpace-Health")
             let (oversizedData, oversizedResponse) = try await URLSession.shared.data(for: healthRequest)
             expect((oversizedResponse as? HTTPURLResponse)?.statusCode == 413, "preview server rejects an oversized health response before transfer", &failures)
             expect(oversizedData.isEmpty, "oversized health rejection has no response body", &failures)
@@ -1226,8 +1226,8 @@ struct LiteTermCoreTestRunner {
 
     private static func checkSymlinkedShellPathIsRejected(_ failures: inout [String]) {
         let fileManager = FileManager.default
-        let root = fileManager.temporaryDirectory.appendingPathComponent("LiteTerm-Runner-root-\(UUID().uuidString)", isDirectory: true)
-        let sibling = fileManager.temporaryDirectory.appendingPathComponent("LiteTerm-Runner-sibling-\(UUID().uuidString)", isDirectory: true)
+        let root = fileManager.temporaryDirectory.appendingPathComponent("LiteSpace-Runner-root-\(UUID().uuidString)", isDirectory: true)
+        let sibling = fileManager.temporaryDirectory.appendingPathComponent("LiteSpace-Runner-sibling-\(UUID().uuidString)", isDirectory: true)
         do {
             try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
             try fileManager.createDirectory(at: sibling, withIntermediateDirectories: true)
@@ -1248,7 +1248,7 @@ struct LiteTermCoreTestRunner {
 
     private static func checkWorkspaceVirtualPaths(_ failures: inout [String]) {
         let fileManager = FileManager.default
-        let root = fileManager.temporaryDirectory.appendingPathComponent("LiteTerm-Runner-virtual-root-\(UUID().uuidString)", isDirectory: true)
+        let root = fileManager.temporaryDirectory.appendingPathComponent("LiteSpace-Runner-virtual-root-\(UUID().uuidString)", isDirectory: true)
         do {
             let nested = root.appendingPathComponent("nested", isDirectory: true)
             try fileManager.createDirectory(at: nested, withIntermediateDirectories: true)
@@ -1274,7 +1274,7 @@ struct LiteTermCoreTestRunner {
 
     private static func checkLocalShellFileOperations(_ failures: inout [String]) async {
         let fileManager = FileManager.default
-        let root = fileManager.temporaryDirectory.appendingPathComponent("LiteTerm-Runner-local-\(UUID().uuidString)", isDirectory: true)
+        let root = fileManager.temporaryDirectory.appendingPathComponent("LiteSpace-Runner-local-\(UUID().uuidString)", isDirectory: true)
         do {
             try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
             let shell = LocalShell(rootURL: root)
@@ -1386,7 +1386,7 @@ struct LiteTermCoreTestRunner {
 
     private static func checkLocalShellEditorClearAndSizeLimit(_ failures: inout [String]) async {
         let fileManager = FileManager.default
-        let root = fileManager.temporaryDirectory.appendingPathComponent("LiteTerm-Runner-size-\(UUID().uuidString)", isDirectory: true)
+        let root = fileManager.temporaryDirectory.appendingPathComponent("LiteSpace-Runner-size-\(UUID().uuidString)", isDirectory: true)
         do {
             try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
             let atLimit = root.appendingPathComponent("at-limit.txt")
@@ -1411,7 +1411,7 @@ struct LiteTermCoreTestRunner {
 
     private static func checkLocalShellDirectoryEditAndEmptyCat(_ failures: inout [String]) async {
         let fileManager = FileManager.default
-        let root = fileManager.temporaryDirectory.appendingPathComponent("LiteTerm-Runner-edit-empty-\(UUID().uuidString)", isDirectory: true)
+        let root = fileManager.temporaryDirectory.appendingPathComponent("LiteSpace-Runner-edit-empty-\(UUID().uuidString)", isDirectory: true)
         do {
             try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
             try fileManager.createDirectory(at: root.appendingPathComponent("docs"), withIntermediateDirectories: false)
@@ -1433,7 +1433,7 @@ struct LiteTermCoreTestRunner {
     }
 
     private static func checkBoundedLocalFileRead(_ failures: inout [String]) {
-        let root = URL(fileURLWithPath: "/tmp/LiteTerm-bounded-read-\(UUID().uuidString)", isDirectory: true)
+        let root = URL(fileURLWithPath: "/tmp/LiteSpace-bounded-read-\(UUID().uuidString)", isDirectory: true)
         let handle = RunnerGrowingReadHandle(
             availableByteCount: LocalFileSystem.maximumTextFileBytes + 64 * 1024
         )
@@ -1462,7 +1462,7 @@ struct LiteTermCoreTestRunner {
 
     private static func checkInjectedFileAccessBoundary(_ failures: inout [String]) async {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LiteTerm-Runner-injected-file-access-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("LiteSpace-Runner-injected-file-access-\(UUID().uuidString)", isDirectory: true)
         let shell = LocalShell(rootURL: root, fileSystem: RunnerFileSystem())
 
         let listing = await shell.execute("ls")
@@ -1664,8 +1664,8 @@ struct LiteTermCoreTestRunner {
     }
 
     private static func checkCoordinatedPathInspection(_ failures: inout [String]) async {
-        let root = URL(fileURLWithPath: "/tmp/LiteTerm-runner-inspected-root-\(UUID().uuidString)", isDirectory: true)
-        let outside = URL(fileURLWithPath: "/tmp/LiteTerm-runner-inspected-outside-\(UUID().uuidString)", isDirectory: true)
+        let root = URL(fileURLWithPath: "/tmp/LiteSpace-runner-inspected-root-\(UUID().uuidString)", isDirectory: true)
+        let outside = URL(fileURLWithPath: "/tmp/LiteSpace-runner-inspected-outside-\(UUID().uuidString)", isDirectory: true)
         let fileSystem = RunnerInspectingFileSystem(
             symbolicLinks: [root.appendingPathComponent("escape").path: outside.path]
         )
@@ -1685,7 +1685,7 @@ struct LiteTermCoreTestRunner {
         }
 
         let cdFileSystem = RunnerInspectingFileSystem()
-        let cdRoot = URL(fileURLWithPath: "/tmp/LiteTerm-runner-inspected-cd-\(UUID().uuidString)", isDirectory: true)
+        let cdRoot = URL(fileURLWithPath: "/tmp/LiteSpace-runner-inspected-cd-\(UUID().uuidString)", isDirectory: true)
         let shell = LocalShell(rootURL: cdRoot, fileSystem: cdFileSystem)
         let change = await shell.execute("cd virtual-folder")
         expect(change.outputLines.isEmpty, "local shell accepts injected directory inspection", &failures)
@@ -1812,7 +1812,7 @@ struct LiteTermCoreTestRunner {
 
     private static func checkHostRepository(_ failures: inout [String]) {
         let directoryURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LiteTerm-Runner-hosts-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("LiteSpace-Runner-hosts-\(UUID().uuidString)", isDirectory: true)
         let fileURL = directoryURL.appendingPathComponent("hosts.json")
         do {
             let first = try SSHHost(
@@ -2512,7 +2512,7 @@ struct LiteTermCoreTestRunner {
 
     private static func checkAcceptanceFlow(_ failures: inout [String]) async {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LiteTerm-Runner-Acceptance-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("LiteSpace-Runner-Acceptance-\(UUID().uuidString)", isDirectory: true)
 
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
@@ -2608,7 +2608,7 @@ struct LiteTermCoreTestRunner {
             exit(EXIT_FAILURE)
         }
 
-        print("PASS: \(passingCheckCount) LiteTermCore checks")
+        print("PASS: \(passingCheckCount) LiteSpaceCore checks")
     }
 }
 

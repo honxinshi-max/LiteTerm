@@ -1,1 +1,1 @@
-../../LiteTerm/Features/SSH/SSHClientConfiguration.swift
+../../LiteSpace/Features/SSH/SSHClientConfiguration.swift

@@ -2,8 +2,8 @@
 set -eu
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-cache_root=${LITETERM_CPYTHON_CACHE_ROOT:-"$project_root/.cache/cpython"}
-artifact_base=${LITETERM_CPYTHON_ARTIFACT_ROOT:-"$project_root/.artifacts/cpython"}
+cache_root=${LITESPACE_CPYTHON_CACHE_ROOT:-"$project_root/.cache/cpython"}
+artifact_base=${LITESPACE_CPYTHON_ARTIFACT_ROOT:-"$project_root/.artifacts/cpython"}
 source_root="$cache_root/Python-3.14.7"
 artifact_root="$artifact_base/3.14.7"
 metadata="$project_root/Vendor/CPython/source.json"
@@ -24,8 +24,8 @@ xcrun --sdk iphoneos --show-sdk-build-version >/dev/null 2>&1 \
 xcrun --sdk iphonesimulator --show-sdk-build-version >/dev/null 2>&1 \
     || fail "the iPhoneSimulator SDK is unavailable"
 
-test -f "$source_root/.liteterm-source.json" || fail "run fetch-cpython-source.sh first"
-/usr/bin/cmp -s "$metadata" "$source_root/.liteterm-source.json" \
+test -f "$source_root/.litespace-source.json" || fail "run fetch-cpython-source.sh first"
+/usr/bin/cmp -s "$metadata" "$source_root/.litespace-source.json" \
     || fail "CPython source fingerprint mismatch"
 test ! -e "$artifact_root" || fail "versioned CPython artifact directory already exists"
 

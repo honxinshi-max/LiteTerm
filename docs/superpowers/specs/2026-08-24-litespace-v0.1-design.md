@@ -1,0 +1,145 @@
+# LiteSpace V0.1 Design Specification
+
+## Product and role positioning
+
+`role_positioning_card`
+
+- Producer: LiteSpace owner/developer.
+- Target user: an iPad user who needs lightweight local file operations and a reliable interactive shell on an already-provisioned Mac, Linux host, or Codespace.
+- Core job: work comfortably without a hardware keyboard while keeping compilation, language runtimes, Git, Codex, Hermes, and other heavy CLI work on the remote host.
+- Value trigger: folder authorization, local create/read/edit, saved-host SSH connection, touch shortcut use, disconnect, and return to Local mode all work in one stable session.
+- Feedback loop: record launch RSS, connected RSS, reconnect outcome, connection failure category, and the 14-step acceptance result during internal testing; do not collect command text, file content, passwords, or private keys.
+
+## Scope
+
+LiteSpace V0.1 is an iPad-first terminal application with two modes:
+
+1. Local mode: a fixed command set operating only inside the app container or a user-selected security-scoped folder.
+2. SSH mode: a real interactive remote PTY session; remote tools execute on the remote computer and are not bundled in the app.
+
+The fixed local commands are `pwd`, `ls`, `cd`, `cat`, `mkdir`, `touch`, `cp`, `mv`, `rm`, `clear`, plus a native `edit` entry needed to satisfy the create/modify acceptance flow. `edit` presents a SwiftUI text editor; it does not launch a local executable.
+
+V0.1 excludes Linux virtual machines, local Python/Node runtimes, Docker, AI models, SFTP, port forwarding, tmux management, plugins, teams, cloud sync, GitHub integration, complex themes, and background keepalive.
+
+## Platform baseline
+
+- iPadOS 17.0 or newer.
+- Swift 6 language mode with strict concurrency warnings addressed.
+- SwiftUI for application structure and screens.
+- UIKit bridge for SwiftTerm's terminal view and keyboard input handling.
+- One foreground SSH session at a time.
+- Portrait and landscape layouts using adaptive SwiftUI containers.
+
+## Architectural boundaries
+
+### LiteSpaceCore
+
+A Foundation-only module shared by the app and macOS command-line unit tests. It owns:
+
+- local command parsing and validation;
+- canonical path resolution and root containment;
+- bounded local file operations;
+- terminal history/scrollback limits;
+- host metadata models and reconnect policy;
+- known-host fingerprint decisions.
+
+It must not import SwiftUI, UIKit, Security, SwiftTerm, Network, NIO, or NIOSSH.
+
+### App target
+
+The app target owns:
+
+- SwiftUI navigation and Local/SSH mode selection;
+- SwiftTerm integration;
+- the touch shortcut bar and Ctrl latch;
+- document picker and security-scoped bookmark lifecycle;
+- `NSFileCoordinator` access for external provider files;
+- native text editing;
+- Keychain secret storage;
+- SwiftNIO SSH transport and PTY channel;
+- foreground lifecycle and bounded reconnect orchestration.
+
+## Local filesystem contract
+
+- Each workspace has a stable identifier, display name, and root URL.
+- The app container Documents directory is always available.
+- External directories become available only after explicit folder selection through `UIDocumentPickerViewController`.
+- External access persists only through a security-scoped bookmark. Stale bookmarks require reauthorization.
+- Every command path is standardized and symlink-resolved before the operation. A resolved path must be the root itself or its descendant.
+- Absolute user paths are virtual paths relative to the selected workspace. They are never interpreted as device-global paths.
+- `cat` and `edit` reject files larger than 5 MiB.
+- `rm` rejects a workspace root and directories, never deletes recursively, and obtains one prepared exact-target/root-relative-path/stable-identity value from one filesystem boundary. The app's File Provider preparation uses one coordination callback and rejects coordinated relocation; the shell also rejects an internally mismatched display/logical pair. Current-mode/current-root confirmation freshly re-resolves without symbolic links and requires the same identity; coordinated storage validates and removes inside one provider coordination callback whose standardized URL must equal the originally prepared target. It never derives a replacement root from a relocated callback. Observable request-time or confirmation-time replacement, rename, target/intermediate symlink substitution, or identity mismatch expires the request. Direct Foundation preparation repeats no-follow path/identity validation, while direct removal retains a documented residual OS-level race because no portable descriptor-relative File Provider deletion API is available.
+- `cp` and `mv` operate on one source and one destination per command.
+- File-provider mutations use coordinated read/write access on the app target.
+
+## Terminal contract
+
+- Terminal emulation is provided by SwiftTerm, not reimplemented.
+- Terminal type is `xterm-256color`.
+- Scrollback is capped at 2,000 lines.
+- Local input and one paste batch are capped at 16 KiB, one reduction at 128 aggregate events, Local command history at 200 entries/128 KiB total, and the Local operation queue at 16 running/queued operations plus 64 KiB declared cost. Multi-event controls reserve the event budget atomically, and queue reservations occur before excess closures are retained. Complete UTF-8 scalars are accepted atomically; Up/Down navigates history.
+- Workspace-root transitions use a separate coalescing scheduler retaining at most one running, one pending safety, and one latest pending normal transition. Background stop-access/App-Documents safety work cannot be rejected or overwritten by normal folder/activation intents and executes before the latest normal transition.
+- Shortcut keys are `Esc`, `Ctrl`, `Tab`, `↑`, `↓`, `←`, `→`, `/`.
+- Ctrl is a one-shot latch. After Ctrl is selected, the next printable ASCII key is converted to its control byte and the latch clears.
+- Copy/paste uses standard iPad selection and pasteboard behavior.
+- Commands and output are not written to persistent logs.
+
+## SSH contract
+
+- Transport: SwiftNIO SSH over NIOTransportServices.
+- Authentication: password from Keychain or an app-generated Ed25519 private key stored as Keychain data.
+- Imported arbitrary legacy private-key formats are not part of V0.1.
+- Host metadata is stored separately from secrets.
+- The first connection displays a SHA-256 host-key fingerprint for explicit trust. A changed known-host key hard-fails until the user explicitly replaces trust.
+- On connection, request a PTY using the current terminal rows and columns, then request an interactive shell.
+- Resize events update the remote PTY window.
+- The child channel enables remote half-closure. When the server closes its output side, all already-received terminal bytes must finish MainActor delivery before the child channel closes.
+- Disconnect closes the child channel, SSH channel, and network bootstrap resources without leaving a background loop.
+- A normal remote shell EOF is classified as `remoteSessionEnded`, not as a transport failure. It does not auto-reconnect, because commands such as `exit` intentionally end a session; the failure banner offers a user-initiated retry.
+- Failure presentation maps transport, remote-session-ended, authentication, host-key mismatch, missing credential, cancelled trust, and protocol failures to bounded recovery actions. Host-key mismatch and trust cancellation require host review; missing credentials require credential repair; they cannot be bypassed by the generic retry action.
+- Automatic reconnect is limited to foreground operation and return-to-foreground. It performs at most 3 attempts with delays of 1, 2, and 4 seconds. Authentication rejection, host-key mismatch, and normal remote EOF never auto-retry.
+- iPadOS suspension is expected to interrupt the socket. V0.1 does not claim indefinite background SSH.
+
+## Security and App Store boundaries
+
+- No sandbox bypass, JIT, downloaded executable code, local process spawning, or access outside the app container/security-scoped URLs.
+- Passwords, private keys, and trusted host fingerprints are Keychain items with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.
+- Host metadata contains no plaintext password or private key.
+- Logs may contain only non-secret connection state and normalized error categories in debug builds.
+- The application privacy copy explains local folder access and direct SSH connections; no analytics SDK is included.
+- The app and `LiteSpaceCore` framework ship distinct privacy manifests. The app declares UserDefaults `CA92.1` and FileTimestamp `C617.1` plus `3B52.1`; Core declares only both FileTimestamp reasons. Archive privacy-report review remains a separate release gate.
+- Third-party license notices ship for SwiftTerm (MIT), SwiftNIO SSH (Apache-2.0), SwiftNIO Transport Services (Apache-2.0), SwiftNIO (Apache-2.0), and their transitive dependencies.
+
+## Resource constraints
+
+- One active terminal session.
+- 2,000-line scrollback.
+- 200-entry/128 KiB Local command history, 16 KiB Local input/event batches, a 16-operation/64 KiB Local operation queue, and 64 KiB-chunked text reads retaining no more than 5 MiB plus a one-byte overflow probe.
+- 5 MiB local read/edit ceiling.
+- No unlimited cache and no persistent terminal transcript.
+- App-generated SSH keys only in V0.1.
+- Target installed size: 15-35 MiB after App Store thinning, treated as an estimate until measured from an archive.
+- Target steady foreground RSS: 45-90 MiB local and 60-130 MiB with one SSH session, treated as an estimate until measured on the M1 iPad Pro.
+
+## Acceptance gates
+
+### Automatable on the current Mac
+
+- Swift package core tests pass.
+- A pinned-dependency, in-process SwiftNIO SSH loopback test passes password authentication, first-use host-key trust, `xterm-256color` PTY dimensions, bidirectional bytes, resize, final-output delivery, remote half-close, and client teardown.
+- Local path escape, symlink escape, root deletion, size limit, parser, history cap, reconnect policy, and known-host decisions have behavioral tests.
+- Generated Xcode project declares the iPad app, deployment target, dependencies, entitlements, test target, and license resources.
+- Static scans find no forbidden runtime, VM, SFTP, forwarding, or plaintext-secret implementation.
+
+### Requires full Xcode and an iPad or simulator
+
+- App target compiles and launches.
+- Rotation, software keyboard, clipboard, document picker, security-scoped bookmark restore, and native editor work.
+- SwiftTerm correctly receives shortcut input and remote output.
+
+### Requires two controlled SSH servers and a physical iPad
+
+- Password and generated-Ed25519 authentication interoperate.
+- Host-key first trust and mismatch rejection work.
+- PTY resize, Ctrl/Tab/Esc/arrows, long-running output, disconnect, foreground reconnect, and the complete 14-step product flow pass.
+- Instruments records real launch time, app size, local RSS, connected RSS, and a 60-minute SSH stability run.

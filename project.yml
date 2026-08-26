@@ -1,4 +1,4 @@
-name: LiteTerm
+name: LiteSpace
 
 options:
   deploymentTarget:
@@ -27,42 +27,42 @@ packages:
     revision: 47d3869a7291f085c1fb9fb1e6d3b97a793f45c6
 
 targets:
-  LiteTermPythonBridge:
+  LiteSpacePythonBridge:
     type: library.static
     platform: iOS
     sources:
-      - path: LiteTermPythonBridge
+      - path: LiteSpacePythonBridge
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "2"
 
-  LiteTermCore:
+  LiteSpaceCore:
     type: framework
     platform: iOS
     sources:
-      - path: Sources/LiteTermCore
+      - path: Sources/LiteSpaceCore
         excludes:
           - Resources/PrivacyInfo.xcprivacy
-      - path: Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy
+      - path: Sources/LiteSpaceCore/Resources/PrivacyInfo.xcprivacy
         buildPhase: resources
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "2"
 
-  LiteTerm:
+  LiteSpace:
     type: application
     platform: iOS
     sources:
-      - path: LiteTerm
+      - path: LiteSpace
         excludes:
           - Resources/PrivacyInfo.xcprivacy
-      - path: LiteTerm/Resources/PrivacyInfo.xcprivacy
+      - path: LiteSpace/Resources/PrivacyInfo.xcprivacy
         buildPhase: resources
       - path: THIRD_PARTY_NOTICES.md
         buildPhase: resources
     dependencies:
-      - target: LiteTermCore
-      - target: LiteTermPythonBridge
+      - target: LiteSpaceCore
+      - target: LiteSpacePythonBridge
       - package: SwiftTerm
         product: SwiftTerm
       - package: SwiftNIOSSH
@@ -79,30 +79,30 @@ targets:
         product: Crypto
     settings:
       base:
-        CODE_SIGN_ENTITLEMENTS: LiteTerm/Resources/LiteTerm.entitlements
+        CODE_SIGN_ENTITLEMENTS: LiteSpace/Resources/LiteSpace.entitlements
         GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: LiteTerm/Resources/Info.plist
-        PRODUCT_BUNDLE_IDENTIFIER: com.liteterm.app
+        INFOPLIST_FILE: LiteSpace/Resources/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.litespace.app
         TARGETED_DEVICE_FAMILY: "2"
 
-  LiteTermCoreTests:
+  LiteSpaceCoreTests:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - Tests/LiteTermCoreTests
+      - Tests/LiteSpaceCoreTests
     dependencies:
-      - target: LiteTermCore
+      - target: LiteSpaceCore
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "2"
 
-  LiteTermSSHTests:
+  LiteSpaceSSHTests:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - Tests/LiteTermSSHTests
+      - Tests/LiteSpaceSSHTests
     dependencies:
-      - target: LiteTerm
+      - target: LiteSpace
       - package: SwiftNIOSSH
         product: NIOSSH
       - package: SwiftNIO
@@ -115,36 +115,36 @@ targets:
       base:
         TARGETED_DEVICE_FAMILY: "2"
 
-  LiteTermPythonBridgeTests:
+  LiteSpacePythonBridgeTests:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - Tests/LiteTermPythonBridgeTests
+      - Tests/LiteSpacePythonBridgeTests
     dependencies:
-      - target: LiteTermPythonBridge
+      - target: LiteSpacePythonBridge
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "2"
 
-  LiteTermUITests:
+  LiteSpaceUITests:
     type: bundle.ui-testing
     platform: iOS
     sources:
-      - LiteTermUITests
+      - LiteSpaceUITests
     dependencies:
-      - target: LiteTerm
+      - target: LiteSpace
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "2"
 
 schemes:
-  LiteTerm:
+  LiteSpace:
     build:
       targets:
-        LiteTerm: all
+        LiteSpace: all
     test:
       targets:
-        - LiteTermCoreTests
-        - LiteTermSSHTests
-        - LiteTermPythonBridgeTests
-        - LiteTermUITests
+        - LiteSpaceCoreTests
+        - LiteSpaceSSHTests
+        - LiteSpacePythonBridgeTests
+        - LiteSpaceUITests

@@ -1,6 +1,6 @@
 import Crypto
 import Foundation
-import LiteTermCore
+import LiteSpaceCore
 import NIOConcurrencyHelpers
 import NIOCore
 import NIOEmbedded
@@ -18,11 +18,11 @@ enum SSHIntegrationTestFailure: Error, CustomStringConvertible {
     }
 }
 
-enum LiteTermSSHIntegrationTestRunner {
+enum LiteSpaceSSHIntegrationTestRunner {
     static func run() throws {
         try childChannelEnablesRemoteHalfClosure()
         try passwordHostKeyPTYIOResizeAndRemoteEOF()
-        print("PASS: LiteTerm SSH integration checks")
+        print("PASS: LiteSpace SSH integration checks")
     }
 
     private static func childChannelEnablesRemoteHalfClosure() throws {
@@ -47,20 +47,20 @@ enum LiteTermSSHIntegrationTestRunner {
     }
 
     private static func passwordHostKeyPTYIOResizeAndRemoteEOF() throws {
-        let server = try LoopbackSSHServer(username: "liteterm", password: "test-password")
+        let server = try LoopbackSSHServer(username: "litespace", password: "test-password")
         defer { server.shutdown() }
 
         let host = try SSHHost(
             label: "Loopback",
             hostname: "127.0.0.1",
             port: server.port,
-            username: "liteterm",
+            username: "litespace",
             authenticationKind: .password,
             reconnectPreference: .disabled
         )
         let clientEvents = LoopbackClientEvents()
         let client = SSHClient(
-            configuration: LiteTermSSHClientConfiguration(
+            configuration: LiteSpaceSSHClientConfiguration(
                 host: host,
                 credential: .password("test-password"),
                 storedFingerprint: .absent,
@@ -457,4 +457,4 @@ private extension Array where Element: Equatable {
     }
 }
 
-try LiteTermSSHIntegrationTestRunner.run()
+try LiteSpaceSSHIntegrationTestRunner.run()

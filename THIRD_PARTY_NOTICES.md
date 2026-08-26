@@ -1,6 +1,6 @@
-# LiteTerm third-party notices
+# LiteSpace third-party notices
 
-This file records the exact dependency graph resolved for LiteTerm 0.1 and is bundled with the application. Direct dependencies are pinned by immutable Git revision in `project.yml`; the complete graph is locked in the Xcode workspace `Package.resolved` file.
+This file records the exact dependency graph resolved for LiteSpace 0.1 and is bundled with the application. Direct dependencies are pinned by immutable Git revision in `project.yml`; the complete graph is locked in the Xcode workspace `Package.resolved` file.
 
 ## Resolved packages
 
@@ -11,7 +11,7 @@ This file records the exact dependency graph resolved for LiteTerm 0.1 and is bu
 | swift-nio-transport-services | Direct Network.framework transport | 1.28.0 | `67787bb645a5e67d2edcdfbe48a216cc549222d5` | https://github.com/apple/swift-nio-transport-services | Apache-2.0; preserve the license. |
 | swift-nio | Directly linked NIOCore and NIOConcurrencyHelpers; also transitive | 2.101.3 | `0b18836bd8b0162e7e17a995a3fbee20ed8f3b2b` | https://github.com/apple/swift-nio | Apache-2.0; preserve the license and SwiftNIO NOTICE below. |
 | swift-crypto | Direct Ed25519/SHA-256 implementation; also transitive | 4.5.1 | `47d3869a7291f085c1fb9fb1e6d3b97a793f45c6` | https://github.com/apple/swift-crypto | Apache-2.0; preserve the license and SwiftCrypto NOTICE below. |
-| swift-argument-parser | Resolved transitively by SwiftTerm; no LiteTerm product link | 1.8.2 | `6a52f3251125d74daf04fcbd5e6f08a75d074382` | https://github.com/apple/swift-argument-parser | Apache-2.0; preserve the license if distributed. |
+| swift-argument-parser | Resolved transitively by SwiftTerm; no LiteSpace product link | 1.8.2 | `6a52f3251125d74daf04fcbd5e6f08a75d074382` | https://github.com/apple/swift-argument-parser | Apache-2.0; preserve the license if distributed. |
 | swift-asn1 | Transitive | 1.7.1 | `a9a5efd40eaf558a2bcd48d64b1d1646be686008` | https://github.com/apple/swift-asn1 | Apache-2.0; preserve the license and SwiftASN1 NOTICE below. |
 | swift-atomics | Transitive | 1.3.1 | `0442cb5a3f98ab802acb777929fdb446bda11a34` | https://github.com/apple/swift-atomics | Apache-2.0; preserve the license if distributed. |
 | swift-collections | Transitive | 1.6.0 | `a0cb0954ecb21e4e31b0070e6ed5674e8556685a` | https://github.com/apple/swift-collections | Apache-2.0; preserve the license if distributed. |
@@ -21,7 +21,7 @@ No upstream package sources were modified. For an application distribution, reta
 
 ## CPython candidate runtime
 
-LiteTerm pins the official CPython 3.14.7 source archive and release commit as an optional, source-built iOS runtime candidate. CPython is distributed under the Python Software Foundation License Version 2 and includes historical BeOpen.com, CNRI, and CWI license terms in its upstream `LICENSE` file. No CPython binary is committed or distributed by this repository. Any release that links the candidate XCFramework must bundle the exact `LICENSE` file from the verified source archive and must pass the artifact, simulator, device, privacy, and App Review gates documented under `Vendor/CPython`.
+LiteSpace pins the official CPython 3.14.7 source archive and release commit as an optional, source-built iOS runtime candidate. CPython is distributed under the Python Software Foundation License Version 2 and includes historical BeOpen.com, CNRI, and CWI license terms in its upstream `LICENSE` file. No CPython binary is committed or distributed by this repository. Any release that links the candidate XCFramework must bundle the exact `LICENSE` file from the verified source archive and must pass the artifact, simulator, device, privacy, and App Review gates documented under `Vendor/CPython`.
 
 ## SwiftTerm MIT license
 

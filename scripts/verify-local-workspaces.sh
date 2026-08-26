@@ -15,7 +15,7 @@ pass() {
 
 core_output=$(./scripts/run-core-tests.sh)
 printf '%s\n' "$core_output"
-printf '%s\n' "$core_output" | /usr/bin/grep -q '^PASS: 52 LiteTermCore checks$' \
+printf '%s\n' "$core_output" | /usr/bin/grep -q '^PASS: 52 LiteSpaceCore checks$' \
     || fail "portable local-workspace suite did not run all 52 reviewed checks"
 pass "portable local-workspace behavior suite"
 
@@ -39,8 +39,8 @@ fi
 
 if test "$full_xcode" = true; then
     if ! xcodebuild \
-        -project LiteTerm.xcodeproj \
-        -scheme LiteTerm \
+        -project LiteSpace.xcodeproj \
+        -scheme LiteSpace \
         -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M4)' \
         -disableAutomaticPackageResolution \
         -onlyUsePackageVersionsFromResolvedFile \
