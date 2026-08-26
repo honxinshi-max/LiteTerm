@@ -216,6 +216,28 @@ final class LocalShellTests: XCTestCase {
         XCTAssertEqual(clear.outputLines, [])
     }
 
+    func testShellReturnsTypedWorkspaceActionsWithoutLaunchingAProcess() async throws {
+        let root = try makeTemporaryDirectory()
+        let shell = LocalShell(rootURL: root)
+        let cases: [(String, WorkspaceShellAction)] = [
+            ("workspace", .showStatus),
+            ("check", .check),
+            ("test", .test),
+            ("run", .run),
+            ("stop", .stop),
+            ("problems", .showProblems),
+            ("ports", .showPorts)
+        ]
+
+        for (command, expectedAction) in cases {
+            let execution = await shell.execute(command)
+            XCTAssertEqual(execution.workspaceAction, expectedAction)
+            XCTAssertTrue(execution.outputLines.isEmpty)
+            XCTAssertNil(execution.editorURL)
+            XCTAssertNil(execution.deletionConfirmationRequest)
+        }
+    }
+
     func testShellRejectsDirectoryEditing() async throws {
         let root = try makeRoot()
         try fileManager.createDirectory(at: root.appendingPathComponent("docs"), withIntermediateDirectories: false)

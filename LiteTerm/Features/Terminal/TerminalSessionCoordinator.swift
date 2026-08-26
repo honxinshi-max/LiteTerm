@@ -34,6 +34,7 @@ final class TerminalSessionCoordinator: ObservableObject {
     var onRemoteResize: RemoteResizeHandler?
     var onEditorRequested: ((URL) -> Void)?
     var onDeletionConfirmationChanged: ((DeletionConfirmationRequest?) -> Void)?
+    var onWorkspaceAction: ((WorkspaceShellAction) -> Void)?
 
     private weak var terminalView: TerminalView?
     private var localShell: LocalShell
@@ -338,6 +339,9 @@ final class TerminalSessionCoordinator: ObservableObject {
         if let request = execution.deletionConfirmationRequest {
             pendingDeletion = (request, shell, generation)
             onDeletionConfirmationChanged?(request)
+        }
+        if let workspaceAction = execution.workspaceAction {
+            onWorkspaceAction?(workspaceAction)
         }
         terminalView?.feed(text: "$ ")
     }

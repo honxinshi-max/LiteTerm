@@ -52,6 +52,27 @@ public struct ShellCommandParser: Sendable {
         case "edit":
             try requireArity(arguments, command: command, allowed: 1...1)
             return .edit(path: arguments[0])
+        case "workspace":
+            try requireArity(arguments, command: command, allowed: 0...0)
+            return .workspace(action: .showStatus)
+        case "check":
+            try requireArity(arguments, command: command, allowed: 0...0)
+            return .workspace(action: .check)
+        case "test":
+            try requireArity(arguments, command: command, allowed: 0...0)
+            return .workspace(action: .test)
+        case "run":
+            try requireArity(arguments, command: command, allowed: 0...0)
+            return .workspace(action: .run)
+        case "stop":
+            try requireArity(arguments, command: command, allowed: 0...0)
+            return .workspace(action: .stop)
+        case "problems":
+            try requireArity(arguments, command: command, allowed: 0...0)
+            return .workspace(action: .showProblems)
+        case "ports":
+            try requireArity(arguments, command: command, allowed: 0...0)
+            return .workspace(action: .showPorts)
         default:
             throw ShellCommandParserError.unknownCommand(command)
         }

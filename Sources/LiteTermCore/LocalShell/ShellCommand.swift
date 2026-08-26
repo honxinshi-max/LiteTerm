@@ -1,3 +1,13 @@
+public enum WorkspaceShellAction: String, CaseIterable, Equatable, Sendable {
+    case showStatus
+    case check
+    case test
+    case run
+    case stop
+    case showProblems
+    case showPorts
+}
+
 public enum ShellCommand: Equatable, Sendable {
     case pwd
     case ls(path: String?)
@@ -10,4 +20,5 @@ public enum ShellCommand: Equatable, Sendable {
     case remove(path: String)
     case clear
     case edit(path: String)
+    case workspace(action: WorkspaceShellAction)
 }

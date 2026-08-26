@@ -48,6 +48,7 @@ struct LiteTermCoreTestRunner {
         checkWorkspaceVirtualPaths(&failures)
         await checkLocalShellFileOperations(&failures)
         await checkLocalShellEditorClearAndSizeLimit(&failures)
+        await checkLocalShellWorkspaceActions(&failures)
         checkBoundedLocalFileRead(&failures)
         await checkLocalShellDirectoryEditAndEmptyCat(&failures)
         await checkInjectedFileAccessBoundary(&failures)
@@ -64,7 +65,7 @@ struct LiteTermCoreTestRunner {
         checkSSHConnectionStateAndReconnect(&failures)
         await checkAcceptanceFlow(&failures)
 
-        finish(failures, passingCheckCount: 37)
+        finish(failures, passingCheckCount: 38)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -193,7 +194,14 @@ struct LiteTermCoreTestRunner {
             ("cp one.txt two.txt", .copy(source: "one.txt", destination: "two.txt")),
             ("mv one.txt two.txt", .move(source: "one.txt", destination: "two.txt")),
             ("rm note.txt", .remove(path: "note.txt")), ("clear", .clear),
-            ("edit note.txt", .edit(path: "note.txt"))
+            ("edit note.txt", .edit(path: "note.txt")),
+            ("workspace", .workspace(action: .showStatus)),
+            ("check", .workspace(action: .check)),
+            ("test", .workspace(action: .test)),
+            ("run", .workspace(action: .run)),
+            ("stop", .workspace(action: .stop)),
+            ("problems", .workspace(action: .showProblems)),
+            ("ports", .workspace(action: .showPorts))
         ]
         for (input, command) in expected {
             do {
@@ -219,6 +227,31 @@ struct LiteTermCoreTestRunner {
         expect(node.kind == .nodeRequired, "package metadata without static index is Node-required", &failures)
         let unsupported = classifier.classify(relativePaths: ["README.md"])
         expect(unsupported.kind == .unsupported, "unknown project evidence remains unsupported", &failures)
+    }
+
+    private static func checkLocalShellWorkspaceActions(_ failures: inout [String]) async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-workspace-actions-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let shell = LocalShell(rootURL: root)
+            let cases: [(String, WorkspaceShellAction)] = [
+                ("workspace", .showStatus),
+                ("check", .check),
+                ("test", .test),
+                ("run", .run),
+                ("stop", .stop),
+                ("problems", .showProblems),
+                ("ports", .showPorts)
+            ]
+            for (command, expected) in cases {
+                let execution = await shell.execute(command)
+                expect(execution.workspaceAction == expected, "local shell routes \(command) as a typed workspace action", &failures)
+                expect(execution.outputLines.isEmpty, "local shell does not imitate runtime output for \(command)", &failures)
+            }
+        } catch {
+            failures.append("local shell workspace action fixture can be created")
+        }
     }
 
     private static func checkWorkspaceInventoryPolicy(_ failures: inout [String]) {
