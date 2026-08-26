@@ -7,9 +7,19 @@ var packageTargets: [Target] = [
         name: "LiteTermCore",
         resources: [.process("Resources/PrivacyInfo.xcprivacy")]
     ),
+    .target(
+        name: "LiteTermWorkspaceSupport",
+        dependencies: ["LiteTermCore"],
+        path: "LiteTerm/Features/Workspace",
+        sources: [
+            "WorkspaceInventoryService.swift",
+            "WorkspaceSnapshotService.swift",
+            "WorkspaceProfileStore.swift"
+        ]
+    ),
     .executableTarget(
         name: "LiteTermCoreTestRunner",
-        dependencies: ["LiteTermCore"],
+        dependencies: ["LiteTermCore", "LiteTermWorkspaceSupport"],
         path: "Tests/TestRunner"
     )
 ]

@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import LiteTermCore
+import LiteTermWorkspaceSupport
 
 @main
 struct LiteTermCoreTestRunner {
@@ -44,6 +45,9 @@ struct LiteTermCoreTestRunner {
         checkBoundedRuntimeOutput(&failures)
         checkWorkspaceGateReducer(&failures)
         checkReadyPortLeasePolicy(&failures)
+        await checkWorkspaceInventoryService(&failures)
+        await checkWorkspaceSnapshotService(&failures)
+        await checkWorkspaceProfileStore(&failures)
         checkSymlinkedShellPathIsRejected(&failures)
         checkWorkspaceVirtualPaths(&failures)
         await checkLocalShellFileOperations(&failures)
@@ -65,7 +69,7 @@ struct LiteTermCoreTestRunner {
         checkSSHConnectionStateAndReconnect(&failures)
         await checkAcceptanceFlow(&failures)
 
-        finish(failures, passingCheckCount: 38)
+        finish(failures, passingCheckCount: 41)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -500,6 +504,92 @@ struct LiteTermCoreTestRunner {
             "ready lease policy rejects a dead runtime",
             &failures
         )
+    }
+
+    private static func checkWorkspaceInventoryService(_ failures: inout [String]) async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-inventory-service-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try Data("<h1>ready</h1>".utf8).write(to: root.appendingPathComponent("index.html"))
+            try FileManager.default.createDirectory(at: root.appendingPathComponent(".git"), withIntermediateDirectories: true)
+            try Data("private".utf8).write(to: root.appendingPathComponent(".git/config"))
+            let outside = FileManager.default.temporaryDirectory
+                .appendingPathComponent("LiteTerm-Runner-inventory-outside-\(UUID().uuidString).py")
+            try Data("private".utf8).write(to: outside)
+            try FileManager.default.createSymbolicLink(
+                at: root.appendingPathComponent("escape.py"),
+                withDestinationURL: outside
+            )
+
+            let inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+            expect(inspection.classification.kind == .web, "coordinated inventory recognizes an accepted Web entrypoint", &failures)
+            expect(inspection.evaluation.acceptedFiles.map(\.relativePath) == ["index.html"], "coordinated inventory excludes hidden and escaping files", &failures)
+            expect(
+                inspection.evaluation.exclusions.contains {
+                    $0.relativePath == "escape.py" && $0.reason == .symbolicLinkEscape
+                },
+                "coordinated inventory classifies an escaping symbolic link explicitly",
+                &failures
+            )
+        } catch {
+            failures.append("coordinated workspace inventory inspects a real bounded root: \(error)")
+        }
+    }
+
+    private static func checkWorkspaceSnapshotService(_ failures: inout [String]) async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-snapshot-service-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let fileURL = root.appendingPathComponent("main.py")
+            try Data("print('one')\n".utf8).write(to: fileURL)
+            let inventory = try await WorkspaceInventoryService().inspect(rootURL: root)
+            let service = WorkspaceSnapshotService()
+            let first = try await service.capture(
+                generation: 1,
+                rootURL: root,
+                evaluation: inventory.evaluation
+            )
+            try Data("print('two')\n".utf8).write(to: fileURL)
+            let secondInventory = try await WorkspaceInventoryService().inspect(rootURL: root)
+            let second = try await service.capture(
+                generation: 2,
+                rootURL: root,
+                evaluation: secondInventory.evaluation
+            )
+            expect(first.entries.first?.sha256.count == 32, "coordinated snapshot records a SHA-256 source digest", &failures)
+            expect(first.manifestSHA256 != second.manifestSHA256, "coordinated snapshot identity changes with source content", &failures)
+        } catch {
+            failures.append("coordinated workspace snapshot captures real source bytes: \(error)")
+        }
+    }
+
+    private static func checkWorkspaceProfileStore(_ failures: inout [String]) async {
+        let namespace = "LiteTerm.Runner.Profile.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: namespace) else {
+            failures.append("workspace profile runner creates an isolated preferences suite")
+            return
+        }
+        do {
+            let store = WorkspaceProfileStore(defaults: defaults, namespace: namespace)
+            let identity = Data("opaque-root-identity".utf8)
+            let profile = try WorkspaceProfile(
+                kind: .web,
+                entrypoint: "index.html",
+                testConvention: .webSmoke(relativePaths: []),
+                healthPath: ""
+            )
+            try await store.save(profile, rootIdentity: identity)
+            let loadedProfile = try await store.load(rootIdentity: identity)
+            expect(loadedProfile == profile, "workspace profile store round-trips normalized configuration", &failures)
+            let keys = UserDefaults(suiteName: namespace).map {
+                Array($0.dictionaryRepresentation().keys)
+            } ?? []
+            expect(!keys.contains(where: { $0.contains("opaque-root") || $0.contains("/Users/") }), "workspace profile keys do not persist root identity or absolute paths", &failures)
+        } catch {
+            failures.append("workspace profile store persists only normalized configuration: \(error)")
+        }
     }
 
     private static func checkSymlinkedShellPathIsRejected(_ failures: inout [String]) {

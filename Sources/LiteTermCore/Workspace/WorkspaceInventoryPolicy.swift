@@ -118,12 +118,12 @@ public struct WorkspaceInventoryPolicy: Sendable {
             guard !entry.isDirectory else {
                 continue
             }
-            guard entry.isRegularFile else {
-                exclusions.append(exclusion(entry, .notRegularFile))
-                continue
-            }
             if entry.isSymbolicLink && !entry.symbolicLinkTargetIsInsideRoot {
                 exclusions.append(exclusion(entry, .symbolicLinkEscape))
+                continue
+            }
+            guard entry.isRegularFile else {
+                exclusions.append(exclusion(entry, .notRegularFile))
                 continue
             }
             if let reason = exclusionReason(for: entry.relativePath) {
