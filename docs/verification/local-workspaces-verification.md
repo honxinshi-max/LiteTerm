@@ -15,7 +15,7 @@ No source, filename, full path, command, runtime output, credential, network des
 - Active developer directory: Apple Command Line Tools.
 - Full Xcode: unavailable.
 - iOS Simulator: unavailable under the active developer directory.
-- Verified feature-branch checkpoint before this record: `a719fd2c50f9901089592f4d8421fe232c94342c`.
+- This record belongs to the local-workspaces feature branch; the final published SHA is verified independently from GitHub after merge.
 
 ## Evidence gates
 
@@ -24,7 +24,7 @@ No source, filename, full path, command, runtime output, credential, network des
 | Portable workspace behavior | PASS | `scripts/run-core-tests.sh` reported 52 reviewed checks. | Foundation/macOS-compatible behavior plus the real local services compiled into the portable support target; not an iOS XCTest pass. |
 | Synthetic project fixtures | PASS | Repository-owned Web passing/failing, Python script/WSGI/failing, and Swift package fixtures passed real inventory/classification; Web failure blocked a missing local resource and Swift remained check-only. | Python fixtures prove recognition and fail-closed routing while the runtime artifact is absent; they do not prove CPython execution. |
 | Portable package build | PASS | `swift build` exited 0 from the pinned graph. | Not an iOS target or App archive build. |
-| Ready/port invariant | PASS | The portable reducer, real loopback server, health probe, and controller checks prove no published port before the third current health success and immediate withdrawal on edit/invalidity. | Simulator/background/device lifecycle still requires full Xcode and a device. |
+| Ready/port invariant | PASS | The portable reducer, real loopback server, health probe, and controller checks prove no published port before the third current health success and immediate withdrawal on editor save, observed external source mutation, or other invalidity. | Simulator/background/device lifecycle still requires full Xcode and a device. |
 | Authenticated loopback Web service | PASS | A real ephemeral `127.0.0.1` listener served authenticated requests; unauthenticated requests received no project content; the verifier rejects wildcard, LAN, and Bonjour declarations. | WebKit smoke/UI execution on iOS is open. |
 | Python source and artifact contract | PASS | Exact CPython 3.14.7 source URL, SHA-256, tag commit, build command, and required slices passed `verify-cpython-artifact.sh`. | The XCFramework artifact is absent, so this is source-lineage evidence only. |
 | Python capability gate and WSGI envelopes | PASS | Missing-artifact routing, audit/import policy primitives, bounded request/response envelopes, header validation, and app-owned-listener ownership passed portable checks. | CPython compile, unittest, script, WSGI-callable execution, cancellation, finalization, and restart are SKIP until a verified artifact and simulator exist. |

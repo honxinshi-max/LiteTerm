@@ -36,6 +36,12 @@ for required_path in \
     LiteTerm/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png \
     Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy \
     THIRD_PARTY_NOTICES.md \
+    docs/product-scope.md \
+    docs/verification/local-workspaces-acceptance.md \
+    docs/verification/local-workspaces-ipad.md \
+    docs/verification/local-workspaces-privacy.md \
+    docs/verification/local-workspaces-verification.md \
+    docs/verification/python-runtime.md \
     Vendor/CPython/source.json \
     Vendor/CPython/README.md \
     LiteTermPythonBridge/include/LiteTermPythonBridge.h \
