@@ -63,6 +63,8 @@ targets:
         product: NIOCore
       - package: SwiftNIO
         product: NIOConcurrencyHelpers
+      - package: SwiftNIO
+        product: NIOHTTP1
       - package: SwiftCrypto
         product: Crypto
     settings:

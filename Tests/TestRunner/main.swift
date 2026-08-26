@@ -48,6 +48,8 @@ struct LiteTermCoreTestRunner {
         await checkWorkspaceInventoryService(&failures)
         await checkWorkspaceSnapshotService(&failures)
         await checkWorkspaceProfileStore(&failures)
+        await checkLoopbackPreviewServer(&failures)
+        await checkLoopbackHealthProbe(&failures)
         checkSymlinkedShellPathIsRejected(&failures)
         checkWorkspaceVirtualPaths(&failures)
         await checkLocalShellFileOperations(&failures)
@@ -69,7 +71,7 @@ struct LiteTermCoreTestRunner {
         checkSSHConnectionStateAndReconnect(&failures)
         await checkAcceptanceFlow(&failures)
 
-        finish(failures, passingCheckCount: 41)
+        finish(failures, passingCheckCount: 43)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -590,6 +592,96 @@ struct LiteTermCoreTestRunner {
         } catch {
             failures.append("workspace profile store persists only normalized configuration: \(error)")
         }
+    }
+
+    private static func checkLoopbackPreviewServer(_ failures: inout [String]) async {
+        let server = LoopbackPreviewServer()
+        do {
+            let source = PreviewResponseSource.staticFiles([
+                "index.html": PreviewResponse(
+                    status: 200,
+                    headers: ["Content-Type": "text/html; charset=utf-8"],
+                    body: Data("private preview".utf8)
+                )
+            ])
+            let lease = try await server.start(
+                generation: 7,
+                runtimeID: UUID(),
+                source: source
+            )
+            expect(lease.host == "127.0.0.1" && lease.port > 0, "preview server binds one ephemeral IPv4 loopback port", &failures)
+            expect(lease.secretBitCount == 128, "preview server uses a fresh 128-bit run secret", &failures)
+
+            let unauthenticatedURL = URL(string: "http://127.0.0.1:\(lease.port)/index.html")!
+            let (_, unauthenticatedResponse) = try await URLSession.shared.data(from: unauthenticatedURL)
+            expect((unauthenticatedResponse as? HTTPURLResponse)?.statusCode == 404, "preview server returns no project content without authentication", &failures)
+
+            let authenticatedURL = try lease.authenticatedBootstrapURL(relativePath: "index.html")
+            let (data, authenticatedResponse) = try await URLSession.shared.data(from: authenticatedURL)
+            expect(data == Data("private preview".utf8), "preview server serves accepted content after current-run authentication", &failures)
+            let cookie = (authenticatedResponse as? HTTPURLResponse)?.value(forHTTPHeaderField: "Set-Cookie") ?? ""
+            expect(cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"), "preview bootstrap installs a strict HttpOnly run cookie", &failures)
+            do {
+                _ = try lease.authenticatedBootstrapURL(relativePath: "../secret")
+                failures.append("preview lease rejects a traversal bootstrap path")
+            } catch {
+                // Expected.
+            }
+            do {
+                _ = try lease.authenticatedBootstrapURL(relativePath: "credentials.json")
+                failures.append("preview lease rejects a credential-like bootstrap path")
+            } catch {
+                // Expected.
+            }
+        } catch {
+            let code = (error as? URLError)?.errorCode ?? 0
+            failures.append("authenticated loopback preview server completes a real request: URL error code \(code)")
+        }
+        await server.stop()
+        let serverStopped = await !server.isRunning
+        expect(serverStopped, "preview server stop closes its listener", &failures)
+    }
+
+    private static func checkLoopbackHealthProbe(_ failures: inout [String]) async {
+        let server = LoopbackPreviewServer()
+        do {
+            let source = PreviewResponseSource.staticFiles([
+                "health": PreviewResponse(status: 204, headers: [:], body: Data())
+            ])
+            let lease = try await server.start(
+                generation: 11,
+                runtimeID: UUID(),
+                source: source
+            )
+            let result = try await HealthProbe().verify(lease: lease, relativePath: "health")
+            expect(result.consecutiveSuccesses == 3, "health probe requires three consecutive successful responses", &failures)
+            expect(result.generation == 11, "health probe result remains bound to the source generation", &failures)
+            await server.stop()
+
+            let oversizedSource = PreviewResponseSource.staticFiles([
+                "health": PreviewResponse(
+                    status: 200,
+                    headers: [:],
+                    body: Data(repeating: 0x41, count: 256 * 1_024 + 1)
+                )
+            ])
+            let oversizedLease = try await server.start(
+                generation: 12,
+                runtimeID: UUID(),
+                source: oversizedSource
+            )
+            var healthRequest = URLRequest(
+                url: try oversizedLease.authenticatedBootstrapURL(relativePath: "health")
+            )
+            healthRequest.setValue("1", forHTTPHeaderField: "X-LiteTerm-Health")
+            let (oversizedData, oversizedResponse) = try await URLSession.shared.data(for: healthRequest)
+            expect((oversizedResponse as? HTTPURLResponse)?.statusCode == 413, "preview server rejects an oversized health response before transfer", &failures)
+            expect(oversizedData.isEmpty, "oversized health rejection has no response body", &failures)
+        } catch {
+            let code = (error as? URLError)?.errorCode ?? 0
+            failures.append("loopback health probe verifies a bounded current service: URL error code \(code)")
+        }
+        await server.stop()
     }
 
     private static func checkSymlinkedShellPathIsRejected(_ failures: inout [String]) {
