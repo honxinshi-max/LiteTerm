@@ -42,6 +42,8 @@ struct LiteTermCoreTestRunner {
         checkWorkspaceProfileAndSnapshot(&failures)
         checkWorkspaceProblemPrivacy(&failures)
         checkBoundedRuntimeOutput(&failures)
+        checkWorkspaceGateReducer(&failures)
+        checkReadyPortLeasePolicy(&failures)
         checkSymlinkedShellPathIsRejected(&failures)
         checkWorkspaceVirtualPaths(&failures)
         await checkLocalShellFileOperations(&failures)
@@ -62,7 +64,7 @@ struct LiteTermCoreTestRunner {
         checkSSHConnectionStateAndReconnect(&failures)
         await checkAcceptanceFlow(&failures)
 
-        finish(failures, passingCheckCount: 35)
+        finish(failures, passingCheckCount: 37)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -355,6 +357,116 @@ struct LiteTermCoreTestRunner {
         expect(byteBounded.totalByteCount <= 32, "runtime output keeps oversized UTF-8 content inside its byte budget", &failures)
         let budget = RuntimeResourceBudget.iPadCandidate
         expect(budget.pythonResidentBytes == 180 * 1_024 * 1_024, "Python candidate RSS budget remains explicit", &failures)
+    }
+
+    private static func checkWorkspaceGateReducer(_ failures: inout [String]) {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        var gate = WorkspaceGateReducer()
+        let generation = gate.begin()
+        _ = gate.reduce(.inspectionPassed, generation: generation, now: now)
+        _ = gate.reduce(.checkPassed, generation: generation, now: now)
+        _ = gate.reduce(.testsPassed, generation: generation, now: now)
+        _ = gate.reduce(
+            .serviceStarted(
+                port: 49152,
+                listenerID: UUID(),
+                runtimeID: UUID(),
+                secretHandle: UUID()
+            ),
+            generation: generation,
+            now: now
+        )
+        expect(gate.publishedPort(at: now) == nil, "workspace gate hides a started listener port", &failures)
+        _ = gate.reduce(.healthSucceeded(expiresAt: now.addingTimeInterval(5)), generation: generation, now: now)
+        _ = gate.reduce(.healthSucceeded(expiresAt: now.addingTimeInterval(5)), generation: generation, now: now)
+        expect(gate.publishedPort(at: now) == nil, "workspace gate hides a port before the third health success", &failures)
+        _ = gate.reduce(.healthSucceeded(expiresAt: now.addingTimeInterval(5)), generation: generation, now: now)
+        expect(gate.publishedPort(at: now) == 49152, "workspace gate publishes one port after complete readiness", &failures)
+        let staleGeneration = generation
+        _ = gate.invalidate()
+        expect(gate.publishedPort(at: now) == nil, "workspace invalidation withdraws the ready port", &failures)
+        expect(!gate.reduce(.inspectionPassed, generation: staleGeneration, now: now), "workspace gate ignores stale-generation results", &failures)
+
+        var checked = WorkspaceGateReducer()
+        let checkedGeneration = checked.begin()
+        _ = checked.reduce(.inspectionPassed, generation: checkedGeneration, now: now)
+        _ = checked.reduce(.checkOnlyCompleted, generation: checkedGeneration, now: now)
+        expect(checked.state == .checked && checked.publishedPort(at: now) == nil, "check-only completion never publishes a port", &failures)
+
+        var completed = WorkspaceGateReducer()
+        let completedGeneration = completed.begin()
+        _ = completed.reduce(.inspectionPassed, generation: completedGeneration, now: now)
+        _ = completed.reduce(.checkPassed, generation: completedGeneration, now: now)
+        _ = completed.reduce(.testsPassed, generation: completedGeneration, now: now)
+        _ = completed.reduce(.scriptCompleted, generation: completedGeneration, now: now)
+        expect(completed.state == .completed && completed.publishedPort(at: now) == nil, "script completion never publishes a port", &failures)
+    }
+
+    private static func checkReadyPortLeasePolicy(_ failures: inout [String]) {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        let listenerID = UUID()
+        let runtimeID = UUID()
+        let lease = ReadyPortLease(
+            generation: 9,
+            port: 49152,
+            listenerID: listenerID,
+            runtimeID: runtimeID,
+            secretHandle: UUID(),
+            healthExpiresAt: now.addingTimeInterval(1)
+        )
+        let policy = ReadyPortLeasePolicy()
+        expect(
+            policy.isPublishable(
+                lease,
+                currentGeneration: 9,
+                listenerID: listenerID,
+                runtimeID: runtimeID,
+                listenerIsActive: true,
+                runtimeIsAlive: true,
+                now: now
+            ),
+            "ready lease policy accepts a current live healthy lease",
+            &failures
+        )
+        expect(
+            !policy.isPublishable(
+                lease,
+                currentGeneration: 9,
+                listenerID: listenerID,
+                runtimeID: runtimeID,
+                listenerIsActive: true,
+                runtimeIsAlive: true,
+                now: lease.healthExpiresAt
+            ),
+            "ready lease policy rejects an expired health lease",
+            &failures
+        )
+        expect(
+            !policy.isPublishable(
+                lease,
+                currentGeneration: 9,
+                listenerID: UUID(),
+                runtimeID: runtimeID,
+                listenerIsActive: true,
+                runtimeIsAlive: true,
+                now: now
+            ),
+            "ready lease policy rejects a listener identity mismatch",
+            &failures
+        )
+        expect(
+            !policy.isPublishable(
+                lease,
+                currentGeneration: 9,
+                listenerID: listenerID,
+                runtimeID: runtimeID,
+                listenerIsActive: true,
+                runtimeIsAlive: false,
+                now: now
+            ),
+            "ready lease policy rejects a dead runtime",
+            &failures
+        )
     }
 
     private static func checkSymlinkedShellPathIsRejected(_ failures: inout [String]) {
