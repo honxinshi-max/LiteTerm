@@ -19,6 +19,10 @@ This file records the exact dependency graph resolved for LiteTerm 0.1 and is bu
 
 No upstream package sources were modified. For an application distribution, retain this file, the Apache License 2.0 text, the SwiftTerm MIT text, and the upstream NOTICE attributions. Apache-licensed modified source files must carry prominent change notices; Apache trademarks are not licensed. This is an engineering inventory, not legal advice.
 
+## CPython candidate runtime
+
+LiteTerm pins the official CPython 3.14.7 source archive and release commit as an optional, source-built iOS runtime candidate. CPython is distributed under the Python Software Foundation License Version 2 and includes historical BeOpen.com, CNRI, and CWI license terms in its upstream `LICENSE` file. No CPython binary is committed or distributed by this repository. Any release that links the candidate XCFramework must bundle the exact `LICENSE` file from the verified source archive and must pass the artifact, simulator, device, privacy, and App Review gates documented under `Vendor/CPython`.
+
 ## SwiftTerm MIT license
 
 Copyright (c) 2019-2022 Miguel de Icaza (https://github.com/migueldeicaza)

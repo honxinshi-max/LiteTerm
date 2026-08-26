@@ -8,3 +8,5 @@ build/
 xcuserdata/
 LiteTerm.xcodeproj/project.xcworkspace/xcuserdata/
 LiteTerm.xcodeproj/xcuserdata/
+.cache/cpython/
+.artifacts/cpython/

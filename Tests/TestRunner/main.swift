@@ -1,6 +1,8 @@
 import Darwin
 import Foundation
 import LiteTermCore
+import LiteTermPythonBridge
+import LiteTermWorkspaceSupport
 
 @main
 struct LiteTermCoreTestRunner {
@@ -37,10 +39,32 @@ struct LiteTermCoreTestRunner {
         checkQuotedShellPath(&failures)
         checkShellArityRejection(&failures)
         checkExactShellCommandSet(&failures)
+        checkWorkspaceClassification(&failures)
+        await checkRepositoryWorkspaceFixtures(&failures)
+        checkWorkspaceInventoryPolicy(&failures)
+        checkWorkspaceProfileAndSnapshot(&failures)
+        checkWorkspaceProblemPrivacy(&failures)
+        checkBoundedRuntimeOutput(&failures)
+        checkWorkspaceGateReducer(&failures)
+        checkReadyPortLeasePolicy(&failures)
+        checkSwiftSourceDiagnostics(&failures)
+        await checkWorkspaceInventoryService(&failures)
+        await checkWorkspaceSnapshotService(&failures)
+        await checkWebWorkspaceValidation(&failures)
+        await checkWebWorkspaceSmoke(&failures)
+        await checkSwiftWorkspaceAdvisor(&failures)
+        await checkWorkspaceController(&failures)
+        checkPythonBridgeCapabilityBoundary(&failures)
+        await checkPythonWorkspaceCapability(&failures)
+        checkPythonWSGIAdapter(&failures)
+        await checkWorkspaceProfileStore(&failures)
+        await checkLoopbackPreviewServer(&failures)
+        await checkLoopbackHealthProbe(&failures)
         checkSymlinkedShellPathIsRejected(&failures)
         checkWorkspaceVirtualPaths(&failures)
         await checkLocalShellFileOperations(&failures)
         await checkLocalShellEditorClearAndSizeLimit(&failures)
+        await checkLocalShellWorkspaceActions(&failures)
         checkBoundedLocalFileRead(&failures)
         await checkLocalShellDirectoryEditAndEmptyCat(&failures)
         await checkInjectedFileAccessBoundary(&failures)
@@ -57,7 +81,7 @@ struct LiteTermCoreTestRunner {
         checkSSHConnectionStateAndReconnect(&failures)
         await checkAcceptanceFlow(&failures)
 
-        finish(failures, passingCheckCount: 30)
+        finish(failures, passingCheckCount: 52)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -186,7 +210,14 @@ struct LiteTermCoreTestRunner {
             ("cp one.txt two.txt", .copy(source: "one.txt", destination: "two.txt")),
             ("mv one.txt two.txt", .move(source: "one.txt", destination: "two.txt")),
             ("rm note.txt", .remove(path: "note.txt")), ("clear", .clear),
-            ("edit note.txt", .edit(path: "note.txt"))
+            ("edit note.txt", .edit(path: "note.txt")),
+            ("workspace", .workspace(action: .showStatus)),
+            ("check", .workspace(action: .check)),
+            ("test", .workspace(action: .test)),
+            ("run", .workspace(action: .run)),
+            ("stop", .workspace(action: .stop)),
+            ("problems", .workspace(action: .showProblems)),
+            ("ports", .workspace(action: .showPorts))
         ]
         for (input, command) in expected {
             do {
@@ -196,6 +227,1001 @@ struct LiteTermCoreTestRunner {
                 failures.append("shell parser recognizes \(input)")
             }
         }
+    }
+
+    private static func checkWorkspaceClassification(_ failures: inout [String]) {
+        let classifier = WorkspaceClassifier()
+        let swift = classifier.classify(relativePaths: ["Package.swift", "Sources/main.swift"])
+        expect(swift.kind == .swift, "workspace classifier recognizes Swift source evidence", &failures)
+        let python = classifier.classify(relativePaths: ["pyproject.toml", "src/main.py"])
+        expect(python.kind == .python, "workspace classifier recognizes Python source evidence", &failures)
+        let web = classifier.classify(relativePaths: ["index.html", "package.json"])
+        expect(web.kind == .web, "static index remains a Web workspace with package metadata", &failures)
+        let conflict = classifier.classify(relativePaths: ["Package.swift", "main.py"])
+        expect(conflict.kind == .ambiguous, "conflicting supported workspace indicators require a session choice", &failures)
+        let node = classifier.classify(relativePaths: ["package.json", "src/app.js"])
+        expect(node.kind == .nodeRequired, "package metadata without static index is Node-required", &failures)
+        let unsupported = classifier.classify(relativePaths: ["README.md"])
+        expect(unsupported.kind == .unsupported, "unknown project evidence remains unsupported", &failures)
+    }
+
+    private static func checkRepositoryWorkspaceFixtures(_ failures: inout [String]) async {
+        let fixtureRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+            .appendingPathComponent("Tests/Fixtures/Workspace", isDirectory: true)
+        let expectedKinds: [(String, WorkspaceKind)] = [
+            ("WebPassing", .web),
+            ("WebFailing", .web),
+            ("PythonScript", .python),
+            ("PythonWSGI", .python),
+            ("PythonFailing", .python),
+            ("SwiftCheck", .swift)
+        ]
+
+        do {
+            var inspections: [String: WorkspaceInspection] = [:]
+            for (name, expectedKind) in expectedKinds {
+                let root = fixtureRoot.appendingPathComponent(name, isDirectory: true)
+                let inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+                inspections[name] = inspection
+                expect(
+                    inspection.classification.kind == expectedKind,
+                    "repository fixture \(name) classifies as \(expectedKind.rawValue)",
+                    &failures
+                )
+            }
+
+            let snapshotService = WorkspaceSnapshotService()
+            let webProfile = try WorkspaceProfile(
+                kind: .web,
+                entrypoint: "index.html",
+                testConvention: .webSmoke(relativePaths: []),
+                healthPath: ""
+            )
+            if let passingInspection = inspections["WebPassing"] {
+                let passing = try await snapshotService.captureBundle(
+                    generation: 101,
+                    rootURL: fixtureRoot.appendingPathComponent("WebPassing", isDirectory: true),
+                    evaluation: passingInspection.evaluation
+                )
+                expect(
+                    WebWorkspaceRunner.validate(snapshot: passing, profile: webProfile).problems.isEmpty,
+                    "repository Web passing fixture clears static validation",
+                    &failures
+                )
+            } else {
+                failures.append("repository Web passing fixture was inspected")
+            }
+
+            if let failingInspection = inspections["WebFailing"] {
+                let failing = try await snapshotService.captureBundle(
+                    generation: 102,
+                    rootURL: fixtureRoot.appendingPathComponent("WebFailing", isDirectory: true),
+                    evaluation: failingInspection.evaluation
+                )
+                expect(
+                    WebWorkspaceRunner.validate(snapshot: failing, profile: webProfile).problems.contains {
+                        $0.category == .configuration
+                    },
+                    "repository Web failing fixture blocks a missing local resource",
+                    &failures
+                )
+            } else {
+                failures.append("repository Web failing fixture was inspected")
+            }
+
+            if let swiftInspection = inspections["SwiftCheck"] {
+                let swiftSnapshot = try await snapshotService.captureBundle(
+                    generation: 103,
+                    rootURL: fixtureRoot.appendingPathComponent("SwiftCheck", isDirectory: true),
+                    evaluation: swiftInspection.evaluation
+                )
+                let advice = SwiftWorkspaceAdvisor().inspect(snapshot: swiftSnapshot)
+                expect(
+                    advice.problems.isEmpty && !advice.canRunLocally,
+                    "repository Swift fixture is check-only with no local compile claim",
+                    &failures
+                )
+            } else {
+                failures.append("repository Swift fixture was inspected")
+            }
+        } catch {
+            failures.append("repository workspace fixtures execute through real inventory and validation services")
+        }
+    }
+
+    private static func checkLocalShellWorkspaceActions(_ failures: inout [String]) async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-workspace-actions-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let shell = LocalShell(rootURL: root)
+            let cases: [(String, WorkspaceShellAction)] = [
+                ("workspace", .showStatus),
+                ("check", .check),
+                ("test", .test),
+                ("run", .run),
+                ("stop", .stop),
+                ("problems", .showProblems),
+                ("ports", .showPorts)
+            ]
+            for (command, expected) in cases {
+                let execution = await shell.execute(command)
+                expect(execution.workspaceAction == expected, "local shell routes \(command) as a typed workspace action", &failures)
+                expect(execution.outputLines.isEmpty, "local shell does not imitate runtime output for \(command)", &failures)
+            }
+        } catch {
+            failures.append("local shell workspace action fixture can be created")
+        }
+    }
+
+    private static func checkWorkspaceInventoryPolicy(_ failures: inout [String]) {
+        let policy = WorkspaceInventoryPolicy()
+        let entries = [
+            WorkspaceInventoryEntry(
+                relativePath: "main.py",
+                byteCount: 20,
+                isDirectory: false,
+                isRegularFile: true,
+                isSymbolicLink: false,
+                symbolicLinkTargetIsInsideRoot: false
+            ),
+            WorkspaceInventoryEntry(
+                relativePath: "credentials.json",
+                byteCount: 20,
+                isDirectory: false,
+                isRegularFile: true,
+                isSymbolicLink: false,
+                symbolicLinkTargetIsInsideRoot: false
+            )
+        ]
+        let result = policy.evaluate(entries)
+        expect(result.acceptedFiles.map(\.relativePath) == ["main.py"], "workspace inventory excludes credential-like files", &failures)
+        expect(result.violations.isEmpty, "excluded workspace files do not produce a false gate success or limit failure", &failures)
+
+        let malformed = policy.evaluate([
+            WorkspaceInventoryEntry(
+                relativePath: "../escape.py",
+                byteCount: 1,
+                isDirectory: false,
+                isRegularFile: true,
+                isSymbolicLink: false,
+                symbolicLinkTargetIsInsideRoot: false
+            )
+        ])
+        expect(malformed.violations == [.invalidRelativePath], "workspace inventory rejects escaping relative paths", &failures)
+
+        let tooMany = (0...1_000).map { index in
+            WorkspaceInventoryEntry(
+                relativePath: "Sources/\(index).swift",
+                byteCount: 1,
+                isDirectory: false,
+                isRegularFile: true,
+                isSymbolicLink: false,
+                symbolicLinkTargetIsInsideRoot: false
+            )
+        }
+        expect(
+            policy.evaluate(tooMany).violations.contains(.entryCountExceeded(limit: 1_000)),
+            "workspace inventory makes the entry limit a gate failure",
+            &failures
+        )
+
+        let oversized = WorkspaceInventoryEntry(
+            relativePath: "large.py",
+            byteCount: 5 * 1_024 * 1_024 + 1,
+            isDirectory: false,
+            isRegularFile: true,
+            isSymbolicLink: false,
+            symbolicLinkTargetIsInsideRoot: false
+        )
+        expect(
+            policy.evaluate([oversized]).violations == [.fileBytesExceeded(limit: 5 * 1_024 * 1_024)],
+            "workspace inventory makes the single-file limit a gate failure",
+            &failures
+        )
+    }
+
+    private static func checkSwiftSourceDiagnostics(_ failures: inout [String]) {
+        let validSource = #"""
+        // } ] )
+        let text = "{"
+        /* nested /* } */ comment */
+        func run() { print(text) }
+        """#
+        expect(
+            SwiftSourceDiagnostics.inspect(
+                data: Data(validSource.utf8),
+                relativePath: "main.swift"
+            ).isEmpty,
+            "Swift diagnostics ignore delimiters inside comments and strings",
+            &failures
+        )
+
+        let brokenSource = """
+        func run() {
+        <<<<<<< HEAD
+          print("ok")
+        =======
+          print("other")
+        >>>>>>> branch
+        """
+        let brokenProblems = SwiftSourceDiagnostics.inspect(
+            data: Data(brokenSource.utf8),
+            relativePath: "main.swift"
+        )
+        expect(
+            brokenProblems.contains { $0.message == "Unresolved source-control conflict marker." },
+            "Swift diagnostics report conflict markers",
+            &failures
+        )
+        expect(
+            brokenProblems.contains { $0.message == "Unclosed '{' delimiter." },
+            "Swift diagnostics report unmatched delimiters",
+            &failures
+        )
+
+        let invalidEncoding = SwiftSourceDiagnostics.inspect(
+            data: Data([0xFF]),
+            relativePath: "main.swift"
+        )
+        expect(
+            invalidEncoding.count == 1 && invalidEncoding.first?.category == .syntax,
+            "Swift diagnostics reject invalid UTF-8",
+            &failures
+        )
+    }
+
+    private static func checkWorkspaceProfileAndSnapshot(_ failures: inout [String]) {
+        do {
+            let profile = try WorkspaceProfile(
+                kind: .web,
+                entrypoint: "public/index.html",
+                testConvention: .webSmoke(relativePaths: ["tests/smoke.js"]),
+                healthPath: "health"
+            )
+            expect(profile.healthPath == "health", "workspace profile retains a normalized relative health path", &failures)
+            let first = WorkspaceSnapshotEntry(
+                relativePath: "a.py",
+                byteCount: 1,
+                modifiedAtNanoseconds: 1,
+                sha256: Data(repeating: 0xA1, count: 32)
+            )
+            let second = WorkspaceSnapshotEntry(
+                relativePath: "z.py",
+                byteCount: 1,
+                modifiedAtNanoseconds: 2,
+                sha256: Data(repeating: 0xB2, count: 32)
+            )
+            let snapshot = try WorkspaceSnapshot(
+                generation: 4,
+                entries: [second, first],
+                manifestSHA256: Data(repeating: 0xCC, count: 32)
+            )
+            expect(snapshot.entries.map(\.relativePath) == ["a.py", "z.py"], "workspace snapshot canonicalizes manifest order", &failures)
+        } catch {
+            failures.append("workspace profile and snapshot accept normalized bounded input")
+        }
+    }
+
+    private static func checkWorkspaceProblemPrivacy(_ failures: inout [String]) {
+        do {
+            let problem = try WorkspaceProblem(
+                stage: .check,
+                severity: .error,
+                category: .syntax,
+                relativePath: "Sources/private-name.swift",
+                line: 9,
+                message: String(repeating: "é", count: 400)
+            )
+            let encoded = try JSONEncoder().encode(problem.persistenceProjection)
+            let persisted = String(decoding: encoded, as: UTF8.self)
+            expect(problem.message.utf8.count <= 512, "workspace problem message is bounded in memory", &failures)
+            expect(!persisted.contains("private-name") && !persisted.contains("Sources"), "workspace problem persistence drops locators and messages", &failures)
+        } catch {
+            failures.append("workspace problem accepts a normalized relative locator")
+        }
+    }
+
+    private static func checkBoundedRuntimeOutput(_ failures: inout [String]) {
+        var output = BoundedRuntimeOutput(lineLimit: 3, byteLimit: 100)
+        output.append("one")
+        output.append("two")
+        output.append("three")
+        output.append("four")
+        expect(
+            output.lines == [BoundedRuntimeOutput.truncationMarker, "three", "four"],
+            "runtime output retains a truncation marker and newest lines",
+            &failures
+        )
+        expect(output.totalByteCount <= 100, "runtime output accounts for its byte limit", &failures)
+        var byteBounded = BoundedRuntimeOutput(lineLimit: 10, byteLimit: 32)
+        byteBounded.append(String(repeating: "修", count: 20))
+        expect(byteBounded.didTruncate, "runtime output marks a single oversized UTF-8 line as truncated", &failures)
+        expect(byteBounded.totalByteCount <= 32, "runtime output keeps oversized UTF-8 content inside its byte budget", &failures)
+        let budget = RuntimeResourceBudget.iPadCandidate
+        expect(budget.pythonResidentBytes == 180 * 1_024 * 1_024, "Python candidate RSS budget remains explicit", &failures)
+    }
+
+    private static func checkWorkspaceGateReducer(_ failures: inout [String]) {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        var gate = WorkspaceGateReducer()
+        let generation = gate.begin()
+        _ = gate.reduce(.inspectionPassed, generation: generation, now: now)
+        _ = gate.reduce(.checkPassed, generation: generation, now: now)
+        _ = gate.reduce(.testsPassed, generation: generation, now: now)
+        _ = gate.reduce(
+            .serviceStarted(
+                port: 49152,
+                listenerID: UUID(),
+                runtimeID: UUID(),
+                secretHandle: UUID()
+            ),
+            generation: generation,
+            now: now
+        )
+        expect(gate.publishedPort(at: now) == nil, "workspace gate hides a started listener port", &failures)
+        _ = gate.reduce(.healthSucceeded(expiresAt: now.addingTimeInterval(5)), generation: generation, now: now)
+        _ = gate.reduce(.healthSucceeded(expiresAt: now.addingTimeInterval(5)), generation: generation, now: now)
+        expect(gate.publishedPort(at: now) == nil, "workspace gate hides a port before the third health success", &failures)
+        _ = gate.reduce(.healthSucceeded(expiresAt: now.addingTimeInterval(5)), generation: generation, now: now)
+        expect(gate.publishedPort(at: now) == 49152, "workspace gate publishes one port after complete readiness", &failures)
+        let staleGeneration = generation
+        _ = gate.invalidate()
+        expect(gate.publishedPort(at: now) == nil, "workspace invalidation withdraws the ready port", &failures)
+        expect(!gate.reduce(.inspectionPassed, generation: staleGeneration, now: now), "workspace gate ignores stale-generation results", &failures)
+
+        var checked = WorkspaceGateReducer()
+        let checkedGeneration = checked.begin()
+        _ = checked.reduce(.inspectionPassed, generation: checkedGeneration, now: now)
+        _ = checked.reduce(.checkOnlyCompleted, generation: checkedGeneration, now: now)
+        expect(checked.state == .checked && checked.publishedPort(at: now) == nil, "check-only completion never publishes a port", &failures)
+
+        var completed = WorkspaceGateReducer()
+        let completedGeneration = completed.begin()
+        _ = completed.reduce(.inspectionPassed, generation: completedGeneration, now: now)
+        _ = completed.reduce(.checkPassed, generation: completedGeneration, now: now)
+        _ = completed.reduce(.testsPassed, generation: completedGeneration, now: now)
+        _ = completed.reduce(.scriptCompleted, generation: completedGeneration, now: now)
+        expect(completed.state == .completed && completed.publishedPort(at: now) == nil, "script completion never publishes a port", &failures)
+    }
+
+    private static func checkReadyPortLeasePolicy(_ failures: inout [String]) {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        let listenerID = UUID()
+        let runtimeID = UUID()
+        let lease = ReadyPortLease(
+            generation: 9,
+            port: 49152,
+            listenerID: listenerID,
+            runtimeID: runtimeID,
+            secretHandle: UUID(),
+            healthExpiresAt: now.addingTimeInterval(1)
+        )
+        let policy = ReadyPortLeasePolicy()
+        expect(
+            policy.isPublishable(
+                lease,
+                currentGeneration: 9,
+                listenerID: listenerID,
+                runtimeID: runtimeID,
+                listenerIsActive: true,
+                runtimeIsAlive: true,
+                now: now
+            ),
+            "ready lease policy accepts a current live healthy lease",
+            &failures
+        )
+        expect(
+            !policy.isPublishable(
+                lease,
+                currentGeneration: 9,
+                listenerID: listenerID,
+                runtimeID: runtimeID,
+                listenerIsActive: true,
+                runtimeIsAlive: true,
+                now: lease.healthExpiresAt
+            ),
+            "ready lease policy rejects an expired health lease",
+            &failures
+        )
+        expect(
+            !policy.isPublishable(
+                lease,
+                currentGeneration: 9,
+                listenerID: UUID(),
+                runtimeID: runtimeID,
+                listenerIsActive: true,
+                runtimeIsAlive: true,
+                now: now
+            ),
+            "ready lease policy rejects a listener identity mismatch",
+            &failures
+        )
+        expect(
+            !policy.isPublishable(
+                lease,
+                currentGeneration: 9,
+                listenerID: listenerID,
+                runtimeID: runtimeID,
+                listenerIsActive: true,
+                runtimeIsAlive: false,
+                now: now
+            ),
+            "ready lease policy rejects a dead runtime",
+            &failures
+        )
+    }
+
+    private static func checkWorkspaceInventoryService(_ failures: inout [String]) async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-inventory-service-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try Data("<h1>ready</h1>".utf8).write(to: root.appendingPathComponent("index.html"))
+            try FileManager.default.createDirectory(at: root.appendingPathComponent(".git"), withIntermediateDirectories: true)
+            try Data("private".utf8).write(to: root.appendingPathComponent(".git/config"))
+            let outside = FileManager.default.temporaryDirectory
+                .appendingPathComponent("LiteTerm-Runner-inventory-outside-\(UUID().uuidString).py")
+            try Data("private".utf8).write(to: outside)
+            try FileManager.default.createSymbolicLink(
+                at: root.appendingPathComponent("escape.py"),
+                withDestinationURL: outside
+            )
+
+            let inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+            expect(inspection.classification.kind == .web, "coordinated inventory recognizes an accepted Web entrypoint", &failures)
+            expect(inspection.evaluation.acceptedFiles.map(\.relativePath) == ["index.html"], "coordinated inventory excludes hidden and escaping files", &failures)
+            expect(
+                inspection.evaluation.exclusions.contains {
+                    $0.relativePath == "escape.py" && $0.reason == .symbolicLinkEscape
+                },
+                "coordinated inventory classifies an escaping symbolic link explicitly",
+                &failures
+            )
+        } catch {
+            failures.append("coordinated workspace inventory inspects a real bounded root: \(error)")
+        }
+    }
+
+    private static func checkWorkspaceSnapshotService(_ failures: inout [String]) async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-snapshot-service-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let fileURL = root.appendingPathComponent("main.py")
+            try Data("print('one')\n".utf8).write(to: fileURL)
+            let inventory = try await WorkspaceInventoryService().inspect(rootURL: root)
+            let service = WorkspaceSnapshotService()
+            let first = try await service.capture(
+                generation: 1,
+                rootURL: root,
+                evaluation: inventory.evaluation
+            )
+            try Data("print('two')\n".utf8).write(to: fileURL)
+            let secondInventory = try await WorkspaceInventoryService().inspect(rootURL: root)
+            let second = try await service.capture(
+                generation: 2,
+                rootURL: root,
+                evaluation: secondInventory.evaluation
+            )
+            expect(first.entries.first?.sha256.count == 32, "coordinated snapshot records a SHA-256 source digest", &failures)
+            expect(first.manifestSHA256 != second.manifestSHA256, "coordinated snapshot identity changes with source content", &failures)
+        } catch {
+            failures.append("coordinated workspace snapshot captures real source bytes: \(error)")
+        }
+    }
+
+    private static func checkWebWorkspaceValidation(_ failures: inout [String]) async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-web-validation-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let profile = try WorkspaceProfile(
+                kind: .web,
+                entrypoint: "index.html",
+                testConvention: .webSmoke(relativePaths: []),
+                healthPath: ""
+            )
+            let snapshotService = WorkspaceSnapshotService()
+
+            try Data("<script src=\"app.js\"></script>".utf8)
+                .write(to: root.appendingPathComponent("index.html"))
+            try Data("globalThis.ready = true;".utf8)
+                .write(to: root.appendingPathComponent("app.js"))
+            var inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+            var snapshot = try await snapshotService.captureBundle(
+                generation: 1,
+                rootURL: root,
+                evaluation: inspection.evaluation
+            )
+            expect(
+                WebWorkspaceRunner.validate(snapshot: snapshot, profile: profile).problems.isEmpty,
+                "Web validation accepts a complete local snapshot",
+                &failures
+            )
+
+            try Data("<script src=\"missing.js\"></script>".utf8)
+                .write(to: root.appendingPathComponent("index.html"))
+            inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+            snapshot = try await snapshotService.captureBundle(
+                generation: 2,
+                rootURL: root,
+                evaluation: inspection.evaluation
+            )
+            expect(
+                WebWorkspaceRunner.validate(snapshot: snapshot, profile: profile).problems.contains {
+                    $0.category == .configuration
+                },
+                "Web validation rejects a missing local resource",
+                &failures
+            )
+
+            try Data("<script src=\"https://example.invalid/app.js\"></script>".utf8)
+                .write(to: root.appendingPathComponent("index.html"))
+            inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+            snapshot = try await snapshotService.captureBundle(
+                generation: 3,
+                rootURL: root,
+                evaluation: inspection.evaluation
+            )
+            expect(
+                WebWorkspaceRunner.validate(snapshot: snapshot, profile: profile).problems.contains {
+                    $0.category == .privacy
+                },
+                "Web validation rejects an external resource",
+                &failures
+            )
+
+            try Data("<script src=\"app.js\"></script>".utf8)
+                .write(to: root.appendingPathComponent("index.html"))
+            try Data("function broken( {".utf8)
+                .write(to: root.appendingPathComponent("app.js"))
+            inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+            snapshot = try await snapshotService.captureBundle(
+                generation: 4,
+                rootURL: root,
+                evaluation: inspection.evaluation
+            )
+            expect(
+                WebWorkspaceRunner.validate(snapshot: snapshot, profile: profile).problems.contains {
+                    $0.category == .syntax
+                },
+                "Web validation rejects classic JavaScript syntax errors",
+                &failures
+            )
+        } catch {
+            failures.append("Web validation checks an immutable local snapshot")
+        }
+    }
+
+    @MainActor
+    private static func checkWebWorkspaceSmoke(_ failures: inout [String]) async {
+        let server = LoopbackPreviewServer()
+        do {
+            let html = """
+            <script>
+              Promise.reject(new Error('private detail'));
+              window.open('/index.html');
+              const link = document.createElement('a');
+              link.href = '/asset.txt';
+              link.download = 'asset.txt';
+              link.click();
+            </script>
+            <img src="missing.png">
+            """
+            let source = PreviewResponseSource.staticFiles([
+                "index.html": PreviewResponse(
+                    status: 200,
+                    headers: ["Content-Type": "text/html; charset=utf-8"],
+                    body: Data(html.utf8)
+                ),
+                "asset.txt": PreviewResponse(
+                    status: 200,
+                    headers: ["Content-Type": "text/plain; charset=utf-8"],
+                    body: Data("private".utf8)
+                )
+            ])
+            let lease = try await server.start(
+                generation: 8,
+                runtimeID: UUID(),
+                source: source
+            )
+            let problems = await WebWorkspaceRunner().smoke(
+                lease: lease,
+                entrypoint: "index.html",
+                timeout: .seconds(5)
+            )
+            expect(
+                problems.contains { $0.category == .runtime },
+                "Web smoke captures runtime failures",
+                &failures
+            )
+            expect(
+                problems.contains { $0.category == .fileAccess },
+                "Web smoke captures failed local resources",
+                &failures
+            )
+            expect(
+                problems.contains { $0.category == .privacy },
+                "Web smoke denies popup or external navigation capabilities",
+                &failures
+            )
+            expect(
+                problems.contains { $0.message == "A Web download was blocked." },
+                "Web smoke denies downloads",
+                &failures
+            )
+        } catch {
+            failures.append("Web smoke executes in an isolated ephemeral WebKit view")
+        }
+        await server.stop()
+    }
+
+    private static func checkSwiftWorkspaceAdvisor(_ failures: inout [String]) async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-swift-advisor-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try Data("func run() {".utf8).write(to: root.appendingPathComponent("main.swift"))
+            let inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+            let snapshot = try await WorkspaceSnapshotService().captureBundle(
+                generation: 5,
+                rootURL: root,
+                evaluation: inspection.evaluation
+            )
+            let advice = SwiftWorkspaceAdvisor().inspect(snapshot: snapshot)
+            expect(
+                advice.label == "Lightweight diagnostics" && !advice.canRunLocally,
+                "Swift advisor labels its check-only boundary",
+                &failures
+            )
+            expect(
+                advice.handoff.kind == .shareToSwiftPlaygrounds,
+                "Swift advisor exposes an explicit Playgrounds handoff",
+                &failures
+            )
+            expect(
+                advice.problems.contains { $0.category == .syntax },
+                "Swift advisor reports lightweight source diagnostics",
+                &failures
+            )
+        } catch {
+            failures.append("Swift advisor inspects an immutable local snapshot")
+        }
+    }
+
+    @MainActor
+    private static func checkWorkspaceController(_ failures: inout [String]) async {
+        let webRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-controller-web-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: webRoot, withIntermediateDirectories: true)
+            try Data("<h1>Ready</h1>".utf8)
+                .write(to: webRoot.appendingPathComponent("index.html"))
+            let controller = WorkspaceController(rootURL: webRoot)
+            controller.perform(.run)
+            let ready = await waitForWorkspaceState(controller, timeout: .seconds(8)) {
+                $0.presentation.publishedPort != nil
+            }
+            expect(
+                ready && controller.presentation.state == .ready,
+                "workspace controller publishes a Web port only after Ready",
+                &failures
+            )
+            try Data("<h1>Externally changed</h1>".utf8)
+                .write(to: webRoot.appendingPathComponent("index.html"), options: .atomic)
+            let externalMutationWithdrawn = await waitForWorkspaceState(
+                controller,
+                timeout: .seconds(5)
+            ) {
+                $0.presentation.publishedPort == nil
+                    && $0.presentation.state == .failed
+            }
+            expect(
+                externalMutationWithdrawn,
+                "workspace controller withdraws its port after an external source mutation",
+                &failures
+            )
+            await controller.sourceDidChange()
+            expect(
+                controller.presentation.publishedPort == nil
+                    && controller.presentation.state == .idle,
+                "workspace controller withdraws its port before edit invalidation",
+                &failures
+            )
+
+            let swiftRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("LiteTerm-Runner-controller-swift-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: swiftRoot, withIntermediateDirectories: true)
+            try Data("func run() {}".utf8)
+                .write(to: swiftRoot.appendingPathComponent("main.swift"))
+            let swiftController = WorkspaceController(rootURL: swiftRoot)
+            swiftController.perform(.run)
+            let checked = await waitForWorkspaceState(swiftController, timeout: .seconds(4)) {
+                $0.presentation.state == .checked
+            }
+            expect(
+                checked && swiftController.presentation.publishedPort == nil,
+                "workspace controller never publishes a Swift port",
+                &failures
+            )
+            expect(
+                swiftController.presentation.playgroundsHandoff != nil,
+                "workspace controller exposes the explicit Swift Playgrounds handoff",
+                &failures
+            )
+            await swiftController.stopAndInvalidate()
+
+            let pythonRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("LiteTerm-Runner-controller-python-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: pythonRoot, withIntermediateDirectories: true)
+            try Data("print('private')".utf8)
+                .write(to: pythonRoot.appendingPathComponent("main.py"))
+            let pythonController = WorkspaceController(rootURL: pythonRoot)
+            pythonController.perform(.run)
+            let pythonFailed = await waitForWorkspaceState(pythonController, timeout: .seconds(4)) {
+                $0.presentation.state == .failed
+            }
+            expect(
+                pythonFailed
+                    && pythonController.presentation.kind == .python
+                    && pythonController.presentation.publishedPort == nil,
+                "workspace controller recognizes Python but withholds a port without the verified runtime",
+                &failures
+            )
+            await pythonController.stopAndInvalidate()
+        } catch {
+            failures.append("workspace controller owns one fail-closed local runtime")
+        }
+    }
+
+    @MainActor
+    private static func waitForWorkspaceState(
+        _ controller: WorkspaceController,
+        timeout: Duration,
+        condition: @escaping @MainActor (WorkspaceController) -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if condition(controller) { return true }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        return condition(controller)
+    }
+
+    private static func checkPythonBridgeCapabilityBoundary(_ failures: inout [String]) {
+        expect(
+            !LTIsPythonRuntimeAvailable(),
+            "Python bridge remains disabled without a verified iOS artifact",
+            &failures
+        )
+        let safePath = "package/main.py".withCString(LTIsSafePythonRelativePath)
+        let escapedPath = "../private.py".withCString(LTIsSafePythonRelativePath)
+        let deniedSocket = "socket.__new__".withCString(LTIsDeniedPythonAuditEvent)
+        let deniedSubprocess = "subprocess.Popen".withCString(LTIsDeniedPythonAuditEvent)
+        expect(
+            safePath && !escapedPath && deniedSocket && deniedSubprocess,
+            "Python bridge policy rejects path escape, sockets, and subprocesses",
+            &failures
+        )
+    }
+
+    private static func checkPythonWorkspaceCapability(_ failures: inout [String]) async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-python-capability-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try Data("print('private')".utf8).write(to: root.appendingPathComponent("main.py"))
+            let inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+            let snapshot = try await WorkspaceSnapshotService().captureBundle(
+                generation: 6,
+                rootURL: root,
+                evaluation: inspection.evaluation
+            )
+            let profile = try WorkspaceProfile(
+                kind: .python,
+                entrypoint: "main.py",
+                testConvention: .none,
+                healthPath: ""
+            )
+            let report = await PythonWorkspaceRunner().check(snapshot: snapshot, profile: profile)
+            expect(
+                !report.passed && !report.didCompile,
+                "Python runner never claims compilation without the verified artifact",
+                &failures
+            )
+            expect(
+                report.problems.contains { $0.category == .unsupported },
+                "Python runner reports the unavailable reviewed runtime explicitly",
+                &failures
+            )
+        } catch {
+            failures.append("Python workspace capability gate inspects an immutable snapshot")
+        }
+    }
+
+    private static func checkPythonWSGIAdapter(_ failures: inout [String]) {
+        do {
+            let request = PreviewRequest(
+                method: "POST",
+                relativePath: "api/item",
+                query: "page=1",
+                headers: [
+                    "Content-Type": "application/json",
+                    "User-Agent": "private-device-detail",
+                    "X-LiteTerm-Run": "private-secret"
+                ],
+                body: Data("{}".utf8)
+            )
+            let envelope = try PythonWSGIAdapter.makeRequest(from: request)
+            expect(
+                envelope.pathInfo == "/api/item"
+                    && envelope.environ["SERVER_NAME"] == "localhost",
+                "Python WSGI adapter creates a normalized in-memory request",
+                &failures
+            )
+            expect(
+                envelope.environ["HTTP_USER_AGENT"] == nil
+                    && !envelope.environ.values.contains(where: {
+                        $0.contains("private-secret")
+                            || $0.contains("/Users/")
+                            || $0.contains("/private/")
+                    }),
+                "Python WSGI request excludes run secrets, device details, and host paths",
+                &failures
+            )
+
+            let response = try PythonWSGIAdapter.makePreviewResponse(
+                from: PythonWSGIResponseEnvelope(
+                    status: "200 OK",
+                    headers: [
+                        PythonWSGIHeader(name: "Content-Type", value: "text/plain"),
+                        PythonWSGIHeader(name: "Connection", value: "keep-alive")
+                    ],
+                    body: Data("ok".utf8)
+                )
+            )
+            expect(
+                response.status == 200
+                    && response.body == Data("ok".utf8)
+                    && response.headers["Connection"] == nil,
+                "Python WSGI adapter bounds output and removes hop-by-hop headers",
+                &failures
+            )
+
+            do {
+                _ = try PythonWSGIAdapter.makePreviewResponse(
+                    from: PythonWSGIResponseEnvelope(
+                        status: "200 OK",
+                        headers: [],
+                        body: Data(repeating: 0x41, count: 5 * 1_024 * 1_024 + 1)
+                    )
+                )
+                failures.append("Python WSGI adapter rejects oversized responses")
+            } catch {
+                // Expected.
+            }
+        } catch {
+            failures.append("Python WSGI adapter validates bounded request and response envelopes")
+        }
+    }
+
+    private static func checkWorkspaceProfileStore(_ failures: inout [String]) async {
+        let namespace = "LiteTerm.Runner.Profile.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: namespace) else {
+            failures.append("workspace profile runner creates an isolated preferences suite")
+            return
+        }
+        do {
+            let store = WorkspaceProfileStore(defaults: defaults, namespace: namespace)
+            let identity = Data("opaque-root-identity".utf8)
+            let profile = try WorkspaceProfile(
+                kind: .web,
+                entrypoint: "index.html",
+                testConvention: .webSmoke(relativePaths: []),
+                healthPath: ""
+            )
+            try await store.save(profile, rootIdentity: identity)
+            let loadedProfile = try await store.load(rootIdentity: identity)
+            expect(loadedProfile == profile, "workspace profile store round-trips normalized configuration", &failures)
+            let keys = UserDefaults(suiteName: namespace).map {
+                Array($0.dictionaryRepresentation().keys)
+            } ?? []
+            expect(!keys.contains(where: { $0.contains("opaque-root") || $0.contains("/Users/") }), "workspace profile keys do not persist root identity or absolute paths", &failures)
+        } catch {
+            failures.append("workspace profile store persists only normalized configuration: \(error)")
+        }
+    }
+
+    private static func checkLoopbackPreviewServer(_ failures: inout [String]) async {
+        let server = LoopbackPreviewServer()
+        do {
+            let source = PreviewResponseSource.staticFiles([
+                "index.html": PreviewResponse(
+                    status: 200,
+                    headers: ["Content-Type": "text/html; charset=utf-8"],
+                    body: Data("private preview".utf8)
+                )
+            ])
+            let lease = try await server.start(
+                generation: 7,
+                runtimeID: UUID(),
+                source: source
+            )
+            expect(lease.host == "127.0.0.1" && lease.port > 0, "preview server binds one ephemeral IPv4 loopback port", &failures)
+            expect(lease.secretBitCount == 128, "preview server uses a fresh 128-bit run secret", &failures)
+
+            let unauthenticatedURL = URL(string: "http://127.0.0.1:\(lease.port)/index.html")!
+            let (_, unauthenticatedResponse) = try await URLSession.shared.data(from: unauthenticatedURL)
+            expect((unauthenticatedResponse as? HTTPURLResponse)?.statusCode == 404, "preview server returns no project content without authentication", &failures)
+
+            let authenticatedURL = try lease.authenticatedBootstrapURL(relativePath: "index.html")
+            let (data, authenticatedResponse) = try await URLSession.shared.data(from: authenticatedURL)
+            expect(data == Data("private preview".utf8), "preview server serves accepted content after current-run authentication", &failures)
+            let cookie = (authenticatedResponse as? HTTPURLResponse)?.value(forHTTPHeaderField: "Set-Cookie") ?? ""
+            expect(cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"), "preview bootstrap installs a strict HttpOnly run cookie", &failures)
+            do {
+                _ = try lease.authenticatedBootstrapURL(relativePath: "../secret")
+                failures.append("preview lease rejects a traversal bootstrap path")
+            } catch {
+                // Expected.
+            }
+            do {
+                _ = try lease.authenticatedBootstrapURL(relativePath: "credentials.json")
+                failures.append("preview lease rejects a credential-like bootstrap path")
+            } catch {
+                // Expected.
+            }
+        } catch {
+            let code = (error as? URLError)?.errorCode ?? 0
+            failures.append("authenticated loopback preview server completes a real request: URL error code \(code)")
+        }
+        await server.stop()
+        let serverStopped = await !server.isRunning
+        expect(serverStopped, "preview server stop closes its listener", &failures)
+    }
+
+    private static func checkLoopbackHealthProbe(_ failures: inout [String]) async {
+        let server = LoopbackPreviewServer()
+        do {
+            let source = PreviewResponseSource.staticFiles([
+                "health": PreviewResponse(status: 204, headers: [:], body: Data())
+            ])
+            let lease = try await server.start(
+                generation: 11,
+                runtimeID: UUID(),
+                source: source
+            )
+            let result = try await HealthProbe().verify(lease: lease, relativePath: "health")
+            expect(result.consecutiveSuccesses == 3, "health probe requires three consecutive successful responses", &failures)
+            expect(result.generation == 11, "health probe result remains bound to the source generation", &failures)
+            await server.stop()
+
+            let oversizedSource = PreviewResponseSource.staticFiles([
+                "health": PreviewResponse(
+                    status: 200,
+                    headers: [:],
+                    body: Data(repeating: 0x41, count: 256 * 1_024 + 1)
+                )
+            ])
+            let oversizedLease = try await server.start(
+                generation: 12,
+                runtimeID: UUID(),
+                source: oversizedSource
+            )
+            var healthRequest = URLRequest(
+                url: try oversizedLease.authenticatedBootstrapURL(relativePath: "health")
+            )
+            healthRequest.setValue("1", forHTTPHeaderField: "X-LiteTerm-Health")
+            let (oversizedData, oversizedResponse) = try await URLSession.shared.data(for: healthRequest)
+            expect((oversizedResponse as? HTTPURLResponse)?.statusCode == 413, "preview server rejects an oversized health response before transfer", &failures)
+            expect(oversizedData.isEmpty, "oversized health rejection has no response body", &failures)
+        } catch {
+            let code = (error as? URLError)?.errorCode ?? 0
+            failures.append("loopback health probe verifies a bounded current service: URL error code \(code)")
+        }
+        await server.stop()
     }
 
     private static func checkSymlinkedShellPathIsRejected(_ failures: inout [String]) {

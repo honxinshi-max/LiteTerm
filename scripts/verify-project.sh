@@ -36,6 +36,36 @@ for required_path in \
     LiteTerm/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png \
     Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy \
     THIRD_PARTY_NOTICES.md \
+    docs/product-scope.md \
+    docs/verification/local-workspaces-acceptance.md \
+    docs/verification/local-workspaces-ipad.md \
+    docs/verification/local-workspaces-privacy.md \
+    docs/verification/local-workspaces-verification.md \
+    docs/verification/python-runtime.md \
+    Vendor/CPython/source.json \
+    Vendor/CPython/README.md \
+    LiteTermPythonBridge/include/LiteTermPythonBridge.h \
+    LiteTermPythonBridge/LiteTermPythonBridge.m \
+    Sources/LiteTermCore/Workspace/WorkspaceKind.swift \
+    Sources/LiteTermCore/Workspace/WorkspaceClassifier.swift \
+    Sources/LiteTermCore/Workspace/WorkspaceGateReducer.swift \
+    Sources/LiteTermCore/Workspace/ReadyPortLeasePolicy.swift \
+    Sources/LiteTermCore/Workspace/BoundedRuntimeOutput.swift \
+    LiteTerm/Features/Workspace/WorkspaceController.swift \
+    LiteTerm/Features/Workspace/Runtime/LoopbackPreviewServer.swift \
+    LiteTerm/Features/Workspace/Runtime/WebWorkspaceRunner.swift \
+    LiteTerm/Features/Workspace/Runtime/PythonWorkspaceRunner.swift \
+    LiteTerm/Features/Workspace/Runtime/SwiftWorkspaceAdvisor.swift \
+    scripts/verify-cpython-artifact.sh \
+    scripts/verify-local-workspaces.sh \
+    scripts/verify-workspace-privacy.sh \
+    Tests/Fixtures/Workspace/WebPassing/index.html \
+    Tests/Fixtures/Workspace/WebFailing/index.html \
+    Tests/Fixtures/Workspace/PythonScript/main.py \
+    Tests/Fixtures/Workspace/PythonWSGI/main.py \
+    Tests/Fixtures/Workspace/PythonFailing/main.py \
+    Tests/Fixtures/Workspace/SwiftCheck/Package.swift \
+    Tests/Fixtures/Workspace/SwiftCheck/Sources/main.swift \
     Tests/LiteTermCoreTests/AcceptanceFlowTests.swift \
     Tests/SSHIntegrationRunner/Package.swift \
     Tests/SSHIntegrationRunner/Package.resolved \
@@ -51,7 +81,13 @@ do
 done
 pass "required project files exist"
 
-./scripts/run-core-tests.sh
+./scripts/verify-cpython-artifact.sh
+pass "pinned CPython source metadata verified"
+
+core_output=$(./scripts/run-core-tests.sh)
+printf '%s\n' "$core_output"
+printf '%s\n' "$core_output" | /usr/bin/grep -q '^PASS: 52 LiteTermCore checks$' \
+    || fail "portable runner did not execute the reviewed 52-check workspace suite"
 pass "actual LiteTermCore custom runner executed"
 
 ./scripts/run-ssh-integration-tests.sh
@@ -81,7 +117,7 @@ end
 project = YAML.safe_load(File.read("project.yml"), aliases: true)
 assert(project.dig("options", "deploymentTarget", "iOS") == "17.0", "iPadOS deployment target must be 17.0")
 assert(project.dig("settings", "base", "TARGETED_DEVICE_FAMILY") == "2", "global device family must be iPad only")
-%w[LiteTermCore LiteTerm LiteTermCoreTests LiteTermSSHTests LiteTermUITests].each do |target|
+%w[LiteTermPythonBridge LiteTermCore LiteTerm LiteTermCoreTests LiteTermSSHTests LiteTermPythonBridgeTests LiteTermUITests].each do |target|
   assert(project.dig("targets", target, "settings", "base", "TARGETED_DEVICE_FAMILY") == "2", "#{target} must target iPad only")
 end
 
@@ -100,7 +136,7 @@ assert(project.dig("targets", "LiteTermCoreTests", "sources") == ["Tests/LiteTer
 assert(project.dig("targets", "LiteTermSSHTests", "sources") == ["Tests/LiteTermSSHTests"], "SSH test target source membership changed")
 assert(project.dig("targets", "LiteTermUITests", "sources") == ["LiteTermUITests"], "UI test target source membership changed")
 assert(
-  project.dig("schemes", "LiteTerm", "test", "targets") == %w[LiteTermCoreTests LiteTermSSHTests LiteTermUITests],
+  project.dig("schemes", "LiteTerm", "test", "targets") == %w[LiteTermCoreTests LiteTermSSHTests LiteTermPythonBridgeTests LiteTermUITests],
   "shared scheme test-target membership changed"
 )
 
@@ -109,7 +145,7 @@ scheme_test_targets = REXML::XPath.match(scheme, "//TestAction/Testables/Testabl
   element.attributes["BlueprintName"]
 end
 assert(
-  scheme_test_targets == %w[LiteTermCoreTests LiteTermSSHTests LiteTermUITests],
+  scheme_test_targets == %w[LiteTermCoreTests LiteTermSSHTests LiteTermPythonBridgeTests LiteTermUITests],
   "generated shared scheme does not build all test targets"
 )
 
@@ -137,6 +173,12 @@ assert(
   core_package_target.fetch("resources") == [{"path" => "Resources/PrivacyInfo.xcprivacy", "rule" => {"process" => {}}}],
   "LiteTermCore Swift package privacy resource declaration changed"
 )
+workspace_support_target = package.fetch("targets").find { |target| target["name"] == "LiteTermWorkspaceSupport" }
+assert(workspace_support_target, "LiteTermWorkspaceSupport Swift package target missing")
+workspace_support_products = workspace_support_target.fetch("dependencies").map do |dependency|
+  dependency["product"]&.first
+end.compact
+assert(workspace_support_products.include?("NIOHTTP1"), "workspace support target must link NIOHTTP1")
 default_package_target_names = package.fetch("targets").map { |target| target.fetch("name") }
 assert(!default_package_target_names.include?("XCTest"), "default package must not contain a fake XCTest target")
 assert(!default_package_target_names.include?("LiteTermCoreTests"), "default package must not expose XCTest without explicit opt-in")
@@ -294,27 +336,35 @@ assert(
   "all LiteTerm build configurations must select the AppIcon set"
 )
 target_names = objects.values.select { |object| object["isa"] == "PBXNativeTarget" }.map { |object| object["name"] }
-%w[LiteTermCoreTests LiteTermSSHTests LiteTermUITests].each do |name|
+%w[LiteTermPythonBridge LiteTermCoreTests LiteTermSSHTests LiteTermPythonBridgeTests LiteTermUITests].each do |name|
   assert(target_names.include?(name), "#{name} generated target missing")
 end
+
+app_dependencies = project.dig("targets", "LiteTerm", "dependencies")
+assert(
+  app_dependencies.include?({"target" => "LiteTermPythonBridge"}),
+  "LiteTerm app target must link the Python bridge capability gate"
+)
+assert(
+  app_dependencies.include?({"package" => "SwiftNIO", "product" => "NIOHTTP1"}),
+  "LiteTerm app target must link NIOHTTP1 for the app-owned loopback listener"
+)
 RUBY
 pass "project model, pins, targets, AppIcon, distinct privacy resources, orientations, local-network copy, and privacy declarations match"
 
-forbidden_pattern='SFTP|port[[:space:]_-]*forward|Docker|VirtualMachine|PythonKit|JavaScriptCore|NodeRuntime|background[[:space:]_-]*keepalive|UIBackgroundModes|NSBonjourServices|CKContainer|CloudKit|NSTask([^[:alnum:]_]|$)|dlopen[[:space:]]*\('
-process_pattern='(^|[^[:alnum:]_])(Foundation[.])?Process[[:space:]]*\('
-if command -v rg >/dev/null 2>&1; then
-    forbidden_matches=$(rg -n -i "$forbidden_pattern" LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj || true)
-    process_matches=$(rg -n "$process_pattern" LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj || true)
-else
-    forbidden_matches=$(/usr/bin/grep -R -E -n -i "$forbidden_pattern" LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj || true)
-    process_matches=$(/usr/bin/grep -R -E -n "$process_pattern" LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj || true)
+./scripts/verify-workspace-privacy.sh
+pass "local workspace privacy and capability boundary verifier executed"
+
+python_bridge_log_matches=$(rg -n 'NSLog|os_log|fprintf|printf|puts' LiteTermPythonBridge || true)
+if test -n "$python_bridge_log_matches"; then
+    printf '%s\n' "$python_bridge_log_matches"
+    fail "Python bridge must not log source, paths, output, or runtime details"
 fi
-if test -n "$forbidden_matches$process_matches"; then
-    printf '%s\n' "$forbidden_matches"
-    printf '%s\n' "$process_matches"
-    fail "forbidden V0.1 product addition found in production/project scope"
-fi
-pass "production/project scope contains no forbidden product additions"
+pass "Python bridge contains no logging sink"
+
+test "$(rg -n 'return false;' LiteTermPythonBridge/LiteTermPythonBridge.m | wc -l | tr -d ' ')" -ge 1 \
+    || fail "unverified Python bridge must remain capability-gated"
+pass "unverified Python bridge remains fail-closed"
 
 supplemental_secret_pattern='"(password|privateKey|private_key|passphrase|secret|token)"'
 if command -v rg >/dev/null 2>&1; then

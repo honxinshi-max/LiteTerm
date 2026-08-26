@@ -25,19 +25,22 @@ public struct ShellExecution: Equatable, Sendable {
     public let editorURL: URL?
     public let clearRequested: Bool
     public let deletionConfirmationRequest: DeletionConfirmationRequest?
+    public let workspaceAction: WorkspaceShellAction?
 
     public init(
         outputLines: [String] = [],
         directoryChange: URL? = nil,
         editorURL: URL? = nil,
         clearRequested: Bool = false,
-        deletionConfirmationRequest: DeletionConfirmationRequest? = nil
+        deletionConfirmationRequest: DeletionConfirmationRequest? = nil,
+        workspaceAction: WorkspaceShellAction? = nil
     ) {
         self.outputLines = outputLines
         self.directoryChange = directoryChange
         self.editorURL = editorURL
         self.clearRequested = clearRequested
         self.deletionConfirmationRequest = deletionConfirmationRequest
+        self.workspaceAction = workspaceAction
     }
 }
 
@@ -156,6 +159,8 @@ public actor LocalShell {
             let target = try resolver.resolve(path)
             try fileSystem.prepareForEditing(at: target)
             return ShellExecution(editorURL: target)
+        case let .workspace(action):
+            return ShellExecution(workspaceAction: action)
         }
     }
 

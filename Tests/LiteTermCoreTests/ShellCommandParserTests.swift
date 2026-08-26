@@ -28,7 +28,14 @@ final class ShellCommandParserTests: XCTestCase {
             ("mv one.txt two.txt", .move(source: "one.txt", destination: "two.txt")),
             ("rm old.txt", .remove(path: "old.txt")),
             ("clear", .clear),
-            ("edit draft.txt", .edit(path: "draft.txt"))
+            ("edit draft.txt", .edit(path: "draft.txt")),
+            ("workspace", .workspace(action: .showStatus)),
+            ("check", .workspace(action: .check)),
+            ("test", .workspace(action: .test)),
+            ("run", .workspace(action: .run)),
+            ("stop", .workspace(action: .stop)),
+            ("problems", .workspace(action: .showProblems)),
+            ("ports", .workspace(action: .showPorts))
         ]
 
         for (input, expected) in commands {
@@ -38,12 +45,13 @@ final class ShellCommandParserTests: XCTestCase {
     }
 
     func testParserRejectsUnknownCommand() {
-        XCTAssertParserError("run script", equals: .unknownCommand("run"))
+        XCTAssertParserError("launch", equals: .unknownCommand("launch"))
     }
 
     func testParserRejectsWrongArity() {
         XCTAssertParserError("cp one.txt", equals: .wrongArity(command: "cp"))
         XCTAssertParserError("pwd unexpected", equals: .wrongArity(command: "pwd"))
+        XCTAssertParserError("run main.py", equals: .wrongArity(command: "run"))
     }
 
     func testParserRejectsUnterminatedQuote() {

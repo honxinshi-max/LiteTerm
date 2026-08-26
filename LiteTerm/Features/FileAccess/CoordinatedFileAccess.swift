@@ -58,14 +58,21 @@ enum CoordinatedFileAccess {
 
     static func readText(
         from url: URL,
-        openFileForReading: LocalFileReadHandleFactory? = nil
+        openFileForReading: LocalFileReadHandleFactory? = nil,
+        inside rootURL: URL? = nil
     ) throws -> String {
+        if let rootURL, !isContained(url, inside: rootURL) {
+            throw CoordinatedFileAccessError.notRegularFile
+        }
         let coordinator = NSFileCoordinator(filePresenter: nil)
         var coordinationError: NSError?
         var result: Result<String, Error>?
 
         coordinator.coordinate(readingItemAt: url, options: [], error: &coordinationError) { coordinatedURL in
             result = Result {
+                if let rootURL, !isContained(coordinatedURL, inside: rootURL) {
+                    throw CoordinatedFileAccessError.notRegularFile
+                }
                 let values = try coordinatedURL.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
                 guard values.isDirectory != true else {
                     throw CoordinatedFileAccessError.notRegularFile
@@ -105,10 +112,13 @@ enum CoordinatedFileAccess {
         return try result.get()
     }
 
-    static func writeText(_ text: String, to url: URL) throws {
+    static func writeText(_ text: String, to url: URL, inside rootURL: URL? = nil) throws {
         let data = Data(text.utf8)
         guard data.count <= maximumBytes else {
             throw CoordinatedFileAccessError.fileTooLarge
+        }
+        if let rootURL, !isContained(url, inside: rootURL) {
+            throw CoordinatedFileAccessError.notRegularFile
         }
 
         let coordinator = NSFileCoordinator(filePresenter: nil)
@@ -117,6 +127,9 @@ enum CoordinatedFileAccess {
 
         coordinator.coordinate(writingItemAt: url, options: .forReplacing, error: &coordinationError) { coordinatedURL in
             result = Result {
+                if let rootURL, !isContained(coordinatedURL, inside: rootURL) {
+                    throw CoordinatedFileAccessError.notRegularFile
+                }
                 var isDirectory: ObjCBool = false
                 guard FileManager.default.fileExists(atPath: coordinatedURL.path, isDirectory: &isDirectory),
                       !isDirectory.boolValue else {
@@ -133,6 +146,13 @@ enum CoordinatedFileAccess {
             throw CoordinatedFileAccessError.coordinationFailed
         }
         try result.get()
+    }
+
+    private static func isContained(_ itemURL: URL, inside rootURL: URL) -> Bool {
+        let rootComponents = rootURL.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        let itemComponents = itemURL.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        guard itemComponents.count > rootComponents.count else { return false }
+        return zip(rootComponents, itemComponents).allSatisfy(==)
     }
 }
 
