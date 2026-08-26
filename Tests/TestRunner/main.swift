@@ -45,8 +45,12 @@ struct LiteTermCoreTestRunner {
         checkBoundedRuntimeOutput(&failures)
         checkWorkspaceGateReducer(&failures)
         checkReadyPortLeasePolicy(&failures)
+        checkSwiftSourceDiagnostics(&failures)
         await checkWorkspaceInventoryService(&failures)
         await checkWorkspaceSnapshotService(&failures)
+        await checkWebWorkspaceValidation(&failures)
+        await checkWebWorkspaceSmoke(&failures)
+        await checkSwiftWorkspaceAdvisor(&failures)
         await checkWorkspaceProfileStore(&failures)
         await checkLoopbackPreviewServer(&failures)
         await checkLoopbackHealthProbe(&failures)
@@ -71,7 +75,7 @@ struct LiteTermCoreTestRunner {
         checkSSHConnectionStateAndReconnect(&failures)
         await checkAcceptanceFlow(&failures)
 
-        finish(failures, passingCheckCount: 43)
+        finish(failures, passingCheckCount: 47)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -327,6 +331,56 @@ struct LiteTermCoreTestRunner {
         )
     }
 
+    private static func checkSwiftSourceDiagnostics(_ failures: inout [String]) {
+        let validSource = #"""
+        // } ] )
+        let text = "{"
+        /* nested /* } */ comment */
+        func run() { print(text) }
+        """#
+        expect(
+            SwiftSourceDiagnostics.inspect(
+                data: Data(validSource.utf8),
+                relativePath: "main.swift"
+            ).isEmpty,
+            "Swift diagnostics ignore delimiters inside comments and strings",
+            &failures
+        )
+
+        let brokenSource = """
+        func run() {
+        <<<<<<< HEAD
+          print("ok")
+        =======
+          print("other")
+        >>>>>>> branch
+        """
+        let brokenProblems = SwiftSourceDiagnostics.inspect(
+            data: Data(brokenSource.utf8),
+            relativePath: "main.swift"
+        )
+        expect(
+            brokenProblems.contains { $0.message == "Unresolved source-control conflict marker." },
+            "Swift diagnostics report conflict markers",
+            &failures
+        )
+        expect(
+            brokenProblems.contains { $0.message == "Unclosed '{' delimiter." },
+            "Swift diagnostics report unmatched delimiters",
+            &failures
+        )
+
+        let invalidEncoding = SwiftSourceDiagnostics.inspect(
+            data: Data([0xFF]),
+            relativePath: "main.swift"
+        )
+        expect(
+            invalidEncoding.count == 1 && invalidEncoding.first?.category == .syntax,
+            "Swift diagnostics reject invalid UTF-8",
+            &failures
+        )
+    }
+
     private static func checkWorkspaceProfileAndSnapshot(_ failures: inout [String]) {
         do {
             let profile = try WorkspaceProfile(
@@ -564,6 +618,185 @@ struct LiteTermCoreTestRunner {
             expect(first.manifestSHA256 != second.manifestSHA256, "coordinated snapshot identity changes with source content", &failures)
         } catch {
             failures.append("coordinated workspace snapshot captures real source bytes: \(error)")
+        }
+    }
+
+    private static func checkWebWorkspaceValidation(_ failures: inout [String]) async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-web-validation-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let profile = try WorkspaceProfile(
+                kind: .web,
+                entrypoint: "index.html",
+                testConvention: .webSmoke(relativePaths: []),
+                healthPath: ""
+            )
+            let snapshotService = WorkspaceSnapshotService()
+
+            try Data("<script src=\"app.js\"></script>".utf8)
+                .write(to: root.appendingPathComponent("index.html"))
+            try Data("globalThis.ready = true;".utf8)
+                .write(to: root.appendingPathComponent("app.js"))
+            var inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+            var snapshot = try await snapshotService.captureBundle(
+                generation: 1,
+                rootURL: root,
+                evaluation: inspection.evaluation
+            )
+            expect(
+                WebWorkspaceRunner.validate(snapshot: snapshot, profile: profile).problems.isEmpty,
+                "Web validation accepts a complete local snapshot",
+                &failures
+            )
+
+            try Data("<script src=\"missing.js\"></script>".utf8)
+                .write(to: root.appendingPathComponent("index.html"))
+            inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+            snapshot = try await snapshotService.captureBundle(
+                generation: 2,
+                rootURL: root,
+                evaluation: inspection.evaluation
+            )
+            expect(
+                WebWorkspaceRunner.validate(snapshot: snapshot, profile: profile).problems.contains {
+                    $0.category == .configuration
+                },
+                "Web validation rejects a missing local resource",
+                &failures
+            )
+
+            try Data("<script src=\"https://example.invalid/app.js\"></script>".utf8)
+                .write(to: root.appendingPathComponent("index.html"))
+            inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+            snapshot = try await snapshotService.captureBundle(
+                generation: 3,
+                rootURL: root,
+                evaluation: inspection.evaluation
+            )
+            expect(
+                WebWorkspaceRunner.validate(snapshot: snapshot, profile: profile).problems.contains {
+                    $0.category == .privacy
+                },
+                "Web validation rejects an external resource",
+                &failures
+            )
+
+            try Data("<script src=\"app.js\"></script>".utf8)
+                .write(to: root.appendingPathComponent("index.html"))
+            try Data("function broken( {".utf8)
+                .write(to: root.appendingPathComponent("app.js"))
+            inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+            snapshot = try await snapshotService.captureBundle(
+                generation: 4,
+                rootURL: root,
+                evaluation: inspection.evaluation
+            )
+            expect(
+                WebWorkspaceRunner.validate(snapshot: snapshot, profile: profile).problems.contains {
+                    $0.category == .syntax
+                },
+                "Web validation rejects classic JavaScript syntax errors",
+                &failures
+            )
+        } catch {
+            failures.append("Web validation checks an immutable local snapshot")
+        }
+    }
+
+    @MainActor
+    private static func checkWebWorkspaceSmoke(_ failures: inout [String]) async {
+        let server = LoopbackPreviewServer()
+        do {
+            let html = """
+            <script>
+              Promise.reject(new Error('private detail'));
+              window.open('/index.html');
+              const link = document.createElement('a');
+              link.href = '/asset.txt';
+              link.download = 'asset.txt';
+              link.click();
+            </script>
+            <img src="missing.png">
+            """
+            let source = PreviewResponseSource.staticFiles([
+                "index.html": PreviewResponse(
+                    status: 200,
+                    headers: ["Content-Type": "text/html; charset=utf-8"],
+                    body: Data(html.utf8)
+                ),
+                "asset.txt": PreviewResponse(
+                    status: 200,
+                    headers: ["Content-Type": "text/plain; charset=utf-8"],
+                    body: Data("private".utf8)
+                )
+            ])
+            let lease = try await server.start(
+                generation: 8,
+                runtimeID: UUID(),
+                source: source
+            )
+            let problems = await WebWorkspaceRunner().smoke(
+                lease: lease,
+                entrypoint: "index.html",
+                timeout: .seconds(5)
+            )
+            expect(
+                problems.contains { $0.category == .runtime },
+                "Web smoke captures runtime failures",
+                &failures
+            )
+            expect(
+                problems.contains { $0.category == .fileAccess },
+                "Web smoke captures failed local resources",
+                &failures
+            )
+            expect(
+                problems.contains { $0.category == .privacy },
+                "Web smoke denies popup or external navigation capabilities",
+                &failures
+            )
+            expect(
+                problems.contains { $0.message == "A Web download was blocked." },
+                "Web smoke denies downloads",
+                &failures
+            )
+        } catch {
+            failures.append("Web smoke executes in an isolated ephemeral WebKit view")
+        }
+        await server.stop()
+    }
+
+    private static func checkSwiftWorkspaceAdvisor(_ failures: inout [String]) async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-swift-advisor-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try Data("func run() {".utf8).write(to: root.appendingPathComponent("main.swift"))
+            let inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+            let snapshot = try await WorkspaceSnapshotService().captureBundle(
+                generation: 5,
+                rootURL: root,
+                evaluation: inspection.evaluation
+            )
+            let advice = SwiftWorkspaceAdvisor().inspect(snapshot: snapshot)
+            expect(
+                advice.label == "Lightweight diagnostics" && !advice.canRunLocally,
+                "Swift advisor labels its check-only boundary",
+                &failures
+            )
+            expect(
+                advice.handoff.kind == .shareToSwiftPlaygrounds,
+                "Swift advisor exposes an explicit Playgrounds handoff",
+                &failures
+            )
+            expect(
+                advice.problems.contains { $0.category == .syntax },
+                "Swift advisor reports lightweight source diagnostics",
+                &failures
+            )
+        } catch {
+            failures.append("Swift advisor inspects an immutable local snapshot")
         }
     }
 

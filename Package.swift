@@ -25,7 +25,11 @@ var packageTargets: [Target] = [
             "Runtime/PreviewResponse.swift",
             "Runtime/LoopbackHTTPHandler.swift",
             "Runtime/LoopbackPreviewServer.swift",
-            "Runtime/HealthProbe.swift"
+            "Runtime/HealthProbe.swift",
+            "Runtime/WebWorkspaceRunner.swift",
+            "Runtime/WebSmokeWebView.swift",
+            "Runtime/WebErrorBridge.swift",
+            "Runtime/SwiftWorkspaceAdvisor.swift"
         ]
     ),
     .executableTarget(

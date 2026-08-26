@@ -1,9 +1,9 @@
-enum WorkspaceRelativePathPolicy {
-    static func isValidFilePath(_ value: String) -> Bool {
+public enum WorkspaceRelativePathPolicy {
+    public static func isValidFilePath(_ value: String) -> Bool {
         isValidRelativePath(value, allowEmpty: false, rejectHTTPDelimiters: false)
     }
 
-    static func isValidHealthPath(_ value: String) -> Bool {
+    public static func isValidHealthPath(_ value: String) -> Bool {
         isValidRelativePath(value, allowEmpty: true, rejectHTTPDelimiters: true)
     }
 
