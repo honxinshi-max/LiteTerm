@@ -51,7 +51,8 @@ var packageTargets: [Target] = [
             "Runtime/PythonRuntimeConfiguration.swift",
             "Runtime/PythonProblemMapper.swift",
             "Runtime/PythonRunDisposition.swift",
-            "Runtime/PythonWorkspaceRunner.swift"
+            "Runtime/PythonWorkspaceRunner.swift",
+            "Runtime/PythonWSGIAdapter.swift"
         ]
     ),
     .executableTarget(

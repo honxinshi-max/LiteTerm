@@ -55,6 +55,7 @@ struct LiteTermCoreTestRunner {
         await checkWorkspaceController(&failures)
         checkPythonBridgeCapabilityBoundary(&failures)
         await checkPythonWorkspaceCapability(&failures)
+        checkPythonWSGIAdapter(&failures)
         await checkWorkspaceProfileStore(&failures)
         await checkLoopbackPreviewServer(&failures)
         await checkLoopbackHealthProbe(&failures)
@@ -79,7 +80,7 @@ struct LiteTermCoreTestRunner {
         checkSSHConnectionStateAndReconnect(&failures)
         await checkAcceptanceFlow(&failures)
 
-        finish(failures, passingCheckCount: 50)
+        finish(failures, passingCheckCount: 51)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -938,6 +939,72 @@ struct LiteTermCoreTestRunner {
             )
         } catch {
             failures.append("Python workspace capability gate inspects an immutable snapshot")
+        }
+    }
+
+    private static func checkPythonWSGIAdapter(_ failures: inout [String]) {
+        do {
+            let request = PreviewRequest(
+                method: "POST",
+                relativePath: "api/item",
+                query: "page=1",
+                headers: [
+                    "Content-Type": "application/json",
+                    "User-Agent": "private-device-detail",
+                    "X-LiteTerm-Run": "private-secret"
+                ],
+                body: Data("{}".utf8)
+            )
+            let envelope = try PythonWSGIAdapter.makeRequest(from: request)
+            expect(
+                envelope.pathInfo == "/api/item"
+                    && envelope.environ["SERVER_NAME"] == "localhost",
+                "Python WSGI adapter creates a normalized in-memory request",
+                &failures
+            )
+            expect(
+                envelope.environ["HTTP_USER_AGENT"] == nil
+                    && !envelope.environ.values.contains(where: {
+                        $0.contains("private-secret")
+                            || $0.contains("/Users/")
+                            || $0.contains("/private/")
+                    }),
+                "Python WSGI request excludes run secrets, device details, and host paths",
+                &failures
+            )
+
+            let response = try PythonWSGIAdapter.makePreviewResponse(
+                from: PythonWSGIResponseEnvelope(
+                    status: "200 OK",
+                    headers: [
+                        PythonWSGIHeader(name: "Content-Type", value: "text/plain"),
+                        PythonWSGIHeader(name: "Connection", value: "keep-alive")
+                    ],
+                    body: Data("ok".utf8)
+                )
+            )
+            expect(
+                response.status == 200
+                    && response.body == Data("ok".utf8)
+                    && response.headers["Connection"] == nil,
+                "Python WSGI adapter bounds output and removes hop-by-hop headers",
+                &failures
+            )
+
+            do {
+                _ = try PythonWSGIAdapter.makePreviewResponse(
+                    from: PythonWSGIResponseEnvelope(
+                        status: "200 OK",
+                        headers: [],
+                        body: Data(repeating: 0x41, count: 5 * 1_024 * 1_024 + 1)
+                    )
+                )
+                failures.append("Python WSGI adapter rejects oversized responses")
+            } catch {
+                // Expected.
+            }
+        } catch {
+            failures.append("Python WSGI adapter validates bounded request and response envelopes")
         }
     }
 
