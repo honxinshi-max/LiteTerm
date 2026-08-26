@@ -69,6 +69,14 @@ final class WorkspaceGateReducerTests: XCTestCase {
         XCTAssertEqual(checked.state, .checked)
         XCTAssertNil(checked.publishedPort(at: now))
 
+        var tested = WorkspaceGateReducer()
+        let testedGeneration = tested.begin()
+        XCTAssertTrue(tested.reduce(.inspectionPassed, generation: testedGeneration, now: now))
+        XCTAssertTrue(tested.reduce(.checkPassed, generation: testedGeneration, now: now))
+        XCTAssertTrue(tested.reduce(.testOnlyCompleted, generation: testedGeneration, now: now))
+        XCTAssertEqual(tested.state, .checked)
+        XCTAssertNil(tested.publishedPort(at: now))
+
         var completed = WorkspaceGateReducer()
         let completedGeneration = completed.begin()
         XCTAssertTrue(completed.reduce(.inspectionPassed, generation: completedGeneration, now: now))

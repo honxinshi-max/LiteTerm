@@ -15,6 +15,10 @@ final class AppModel: ObservableObject {
             terminalSession.setMode(mode)
             if mode == .local {
                 sshSession.disconnect()
+            } else {
+                workspaceTransitionScheduler.submitSafety { [weak self] in
+                    await self?.workspaceController.stopAndInvalidate()
+                }
             }
         }
     }
@@ -29,6 +33,7 @@ final class AppModel: ObservableObject {
     let hostStore: HostStore
     let terminalSession: TerminalSessionCoordinator
     let sshSession: SSHSessionController
+    let workspaceController: WorkspaceController
     private let workspaceTransitionScheduler: WorkspaceTransitionScheduler
 
     var onHostsRequested: (() -> Void)?
@@ -70,6 +75,8 @@ final class AppModel: ObservableObject {
             clientFactory: sshClientFactory
         )
         self.sshSession = sshSession
+        let workspaceController = WorkspaceController(rootURL: initialRoot)
+        self.workspaceController = workspaceController
         activeWorkspaceName = initialRoot.lastPathComponent
         authorizationErrorMessage = initialError
         terminalSession.onEditorRequested = { [weak self] url in
@@ -83,6 +90,12 @@ final class AppModel: ObservableObject {
         }
         terminalSession.onRemoteResize = { [weak sshSession] columns, rows in
             sshSession?.resize(columns: columns, rows: rows)
+        }
+        terminalSession.onWorkspaceAction = { [weak workspaceController] action in
+            workspaceController?.handleShellAction(action)
+        }
+        workspaceController.onTerminalSummary = { [weak terminalSession] lines in
+            terminalSession?.presentWorkspaceSummary(lines)
         }
 
         #if DEBUG
@@ -129,6 +142,12 @@ final class AppModel: ObservableObject {
         terminalSession.cancelDeletion(request)
     }
 
+    func workspaceSourceDidChange() {
+        workspaceTransitionScheduler.submitSafety { [weak self] in
+            await self?.workspaceController.sourceDidChange()
+        }
+    }
+
     func connect(to host: SSHHost) {
         mode = .ssh
         sshSession.connect(host: host)
@@ -157,6 +176,7 @@ final class AppModel: ObservableObject {
         defer { terminalSession.resumeLocalInput() }
         do {
             let root = try folderAuthorizationStore.select(url: url)
+            await workspaceController.installRoot(root)
             terminalSession.installLocalRoot(
                 root,
                 coordinateFileAccess: root.standardizedFileURL != folderAuthorizationStore.documentsURL.standardizedFileURL
@@ -165,6 +185,7 @@ final class AppModel: ObservableObject {
             authorizationErrorMessage = nil
         } catch {
             let reconciledRoot = folderAuthorizationStore.activeRootURL
+            await workspaceController.installRoot(reconciledRoot)
             terminalSession.installLocalRoot(
                 reconciledRoot,
                 coordinateFileAccess: reconciledRoot.standardizedFileURL
@@ -178,6 +199,7 @@ final class AppModel: ObservableObject {
     private func switchToAppDocuments(clearBookmark: Bool) async {
         await terminalSession.suspendLocalInputAndDrain()
         defer { terminalSession.resumeLocalInput() }
+        await workspaceController.installRoot(folderAuthorizationStore.documentsURL)
         if clearBookmark {
             folderAuthorizationStore.useAppDocuments()
         } else {
@@ -192,12 +214,14 @@ final class AppModel: ObservableObject {
         defer { terminalSession.resumeLocalInput() }
         do {
             let root = try folderAuthorizationStore.restore()
+            await workspaceController.installRoot(root)
             terminalSession.installLocalRoot(
                 root,
                 coordinateFileAccess: root.standardizedFileURL != folderAuthorizationStore.documentsURL.standardizedFileURL
             )
             activeWorkspaceName = root.lastPathComponent
         } catch {
+            await workspaceController.installRoot(folderAuthorizationStore.documentsURL)
             terminalSession.installLocalRoot(folderAuthorizationStore.documentsURL)
             activeWorkspaceName = folderAuthorizationStore.documentsURL.lastPathComponent
             authorizationErrorMessage = error.localizedDescription

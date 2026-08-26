@@ -31,6 +31,7 @@ public enum WorkspaceGateEvent: Equatable, Sendable {
     case inspectionPassed
     case checkPassed
     case checkOnlyCompleted
+    case testOnlyCompleted
     case testsPassed
     case serviceStarted(port: Int, listenerID: UUID, runtimeID: UUID, secretHandle: UUID)
     case scriptCompleted
@@ -118,6 +119,10 @@ public struct WorkspaceGateReducer: Sendable {
             state = .testing
         case .checkOnlyCompleted:
             guard state == .checking else { return false }
+            clearServiceState()
+            state = .checked
+        case .testOnlyCompleted:
+            guard state == .testing else { return false }
             clearServiceState()
             state = .checked
         case .testsPassed:

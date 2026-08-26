@@ -51,6 +51,7 @@ struct LiteTermCoreTestRunner {
         await checkWebWorkspaceValidation(&failures)
         await checkWebWorkspaceSmoke(&failures)
         await checkSwiftWorkspaceAdvisor(&failures)
+        await checkWorkspaceController(&failures)
         await checkWorkspaceProfileStore(&failures)
         await checkLoopbackPreviewServer(&failures)
         await checkLoopbackHealthProbe(&failures)
@@ -75,7 +76,7 @@ struct LiteTermCoreTestRunner {
         checkSSHConnectionStateAndReconnect(&failures)
         await checkAcceptanceFlow(&failures)
 
-        finish(failures, passingCheckCount: 47)
+        finish(failures, passingCheckCount: 48)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -798,6 +799,73 @@ struct LiteTermCoreTestRunner {
         } catch {
             failures.append("Swift advisor inspects an immutable local snapshot")
         }
+    }
+
+    @MainActor
+    private static func checkWorkspaceController(_ failures: inout [String]) async {
+        let webRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-controller-web-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: webRoot, withIntermediateDirectories: true)
+            try Data("<h1>Ready</h1>".utf8)
+                .write(to: webRoot.appendingPathComponent("index.html"))
+            let controller = WorkspaceController(rootURL: webRoot)
+            controller.perform(.run)
+            let ready = await waitForWorkspaceState(controller, timeout: .seconds(8)) {
+                $0.presentation.publishedPort != nil
+            }
+            expect(
+                ready && controller.presentation.state == .ready,
+                "workspace controller publishes a Web port only after Ready",
+                &failures
+            )
+            await controller.sourceDidChange()
+            expect(
+                controller.presentation.publishedPort == nil
+                    && controller.presentation.state == .idle,
+                "workspace controller withdraws its port before edit invalidation",
+                &failures
+            )
+
+            let swiftRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("LiteTerm-Runner-controller-swift-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: swiftRoot, withIntermediateDirectories: true)
+            try Data("func run() {}".utf8)
+                .write(to: swiftRoot.appendingPathComponent("main.swift"))
+            let swiftController = WorkspaceController(rootURL: swiftRoot)
+            swiftController.perform(.run)
+            let checked = await waitForWorkspaceState(swiftController, timeout: .seconds(4)) {
+                $0.presentation.state == .checked
+            }
+            expect(
+                checked && swiftController.presentation.publishedPort == nil,
+                "workspace controller never publishes a Swift port",
+                &failures
+            )
+            expect(
+                swiftController.presentation.playgroundsHandoff != nil,
+                "workspace controller exposes the explicit Swift Playgrounds handoff",
+                &failures
+            )
+            await swiftController.stopAndInvalidate()
+        } catch {
+            failures.append("workspace controller owns one fail-closed local runtime")
+        }
+    }
+
+    @MainActor
+    private static func waitForWorkspaceState(
+        _ controller: WorkspaceController,
+        timeout: Duration,
+        condition: @escaping @MainActor (WorkspaceController) -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if condition(controller) { return true }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        return condition(controller)
     }
 
     private static func checkWorkspaceProfileStore(_ failures: inout [String]) async {

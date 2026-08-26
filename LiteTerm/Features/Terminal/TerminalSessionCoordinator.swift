@@ -263,6 +263,22 @@ final class TerminalSessionCoordinator: ObservableObject {
         remoteStatus = status
     }
 
+    func presentWorkspaceSummary(_ lines: [String]) {
+        guard mode == .local, flowState.activeMode == .local else { return }
+        var output = BoundedRuntimeOutput(lineLimit: 20, byteLimit: 4 * 1_024)
+        for line in lines {
+            let safeScalars = line.unicodeScalars.filter { scalar in
+                scalar.value >= 0x20 && scalar.value != 0x7F
+            }
+            output.append(String(String.UnicodeScalarView(safeScalars)))
+        }
+        terminalView?.feed(text: "\r\n")
+        for line in output.lines {
+            terminalView?.feed(text: line + "\r\n")
+        }
+        terminalView?.feed(text: "$ ")
+    }
+
     private func routeInput(_ bytes: [UInt8]) {
         guard !bytes.isEmpty else { return }
         switch mode {

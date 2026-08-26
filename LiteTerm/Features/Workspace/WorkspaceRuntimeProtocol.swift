@@ -1,0 +1,114 @@
+import Foundation
+import LiteTermCore
+
+public struct WorkspaceControllerServices: @unchecked Sendable {
+    public var inspect: @Sendable (URL) async throws -> WorkspaceInspection
+    public var capture: @Sendable (
+        UInt64,
+        URL,
+        WorkspaceInventoryEvaluation
+    ) async throws -> WorkspaceCapturedSnapshot
+    public var validateWeb: @Sendable (
+        WorkspaceCapturedSnapshot,
+        WorkspaceProfile
+    ) async -> WebWorkspaceValidationReport
+    public var smokeWeb: @MainActor @Sendable (
+        LoopbackServerLease,
+        String,
+        Duration
+    ) async -> [WorkspaceProblem]
+    public var inspectSwift: @Sendable (WorkspaceCapturedSnapshot) async -> SwiftWorkspaceAdvice
+    public var startServer: @Sendable (
+        UInt64,
+        UUID,
+        PreviewResponseSource
+    ) async throws -> LoopbackServerLease
+    public var stopServer: @Sendable () async -> Void
+    public var serverIsRunning: @Sendable () async -> Bool
+    public var verifyHealth: @Sendable (
+        LoopbackServerLease,
+        String
+    ) async throws -> HealthProbeResult
+    public var now: @Sendable () -> Date
+
+    public init(
+        inspect: @escaping @Sendable (URL) async throws -> WorkspaceInspection,
+        capture: @escaping @Sendable (
+            UInt64,
+            URL,
+            WorkspaceInventoryEvaluation
+        ) async throws -> WorkspaceCapturedSnapshot,
+        validateWeb: @escaping @Sendable (
+            WorkspaceCapturedSnapshot,
+            WorkspaceProfile
+        ) async -> WebWorkspaceValidationReport,
+        smokeWeb: @escaping @MainActor @Sendable (
+            LoopbackServerLease,
+            String,
+            Duration
+        ) async -> [WorkspaceProblem],
+        inspectSwift: @escaping @Sendable (WorkspaceCapturedSnapshot) async -> SwiftWorkspaceAdvice,
+        startServer: @escaping @Sendable (
+            UInt64,
+            UUID,
+            PreviewResponseSource
+        ) async throws -> LoopbackServerLease,
+        stopServer: @escaping @Sendable () async -> Void,
+        serverIsRunning: @escaping @Sendable () async -> Bool,
+        verifyHealth: @escaping @Sendable (
+            LoopbackServerLease,
+            String
+        ) async throws -> HealthProbeResult,
+        now: @escaping @Sendable () -> Date = Date.init
+    ) {
+        self.inspect = inspect
+        self.capture = capture
+        self.validateWeb = validateWeb
+        self.smokeWeb = smokeWeb
+        self.inspectSwift = inspectSwift
+        self.startServer = startServer
+        self.stopServer = stopServer
+        self.serverIsRunning = serverIsRunning
+        self.verifyHealth = verifyHealth
+        self.now = now
+    }
+
+    public static func live(
+        inventory: WorkspaceInventoryService = WorkspaceInventoryService(),
+        snapshots: WorkspaceSnapshotService = WorkspaceSnapshotService(),
+        web: WebWorkspaceRunner = WebWorkspaceRunner(),
+        swift: SwiftWorkspaceAdvisor = SwiftWorkspaceAdvisor(),
+        server: LoopbackPreviewServer = LoopbackPreviewServer(),
+        health: HealthProbe = HealthProbe()
+    ) -> WorkspaceControllerServices {
+        WorkspaceControllerServices(
+            inspect: { try await inventory.inspect(rootURL: $0) },
+            capture: { generation, rootURL, evaluation in
+                try await snapshots.captureBundle(
+                    generation: generation,
+                    rootURL: rootURL,
+                    evaluation: evaluation
+                )
+            },
+            validateWeb: { snapshot, profile in
+                WebWorkspaceRunner.validate(snapshot: snapshot, profile: profile)
+            },
+            smokeWeb: { lease, entrypoint, timeout in
+                await web.smoke(lease: lease, entrypoint: entrypoint, timeout: timeout)
+            },
+            inspectSwift: { snapshot in swift.inspect(snapshot: snapshot) },
+            startServer: { generation, runtimeID, source in
+                try await server.start(
+                    generation: generation,
+                    runtimeID: runtimeID,
+                    source: source
+                )
+            },
+            stopServer: { await server.stop() },
+            serverIsRunning: { await server.isRunning },
+            verifyHealth: { lease, relativePath in
+                try await health.verify(lease: lease, relativePath: relativePath)
+            }
+        )
+    }
+}
