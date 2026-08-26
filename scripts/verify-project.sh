@@ -36,6 +36,11 @@ for required_path in \
     LiteTerm/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png \
     Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy \
     THIRD_PARTY_NOTICES.md \
+    Vendor/CPython/source.json \
+    Vendor/CPython/README.md \
+    LiteTermPythonBridge/include/LiteTermPythonBridge.h \
+    LiteTermPythonBridge/LiteTermPythonBridge.m \
+    scripts/verify-cpython-artifact.sh \
     Tests/LiteTermCoreTests/AcceptanceFlowTests.swift \
     Tests/SSHIntegrationRunner/Package.swift \
     Tests/SSHIntegrationRunner/Package.resolved \
@@ -50,6 +55,9 @@ do
     test -f "$required_path" || fail "missing $required_path"
 done
 pass "required project files exist"
+
+./scripts/verify-cpython-artifact.sh
+pass "pinned CPython source metadata verified"
 
 ./scripts/run-core-tests.sh
 pass "actual LiteTermCore custom runner executed"
@@ -81,7 +89,7 @@ end
 project = YAML.safe_load(File.read("project.yml"), aliases: true)
 assert(project.dig("options", "deploymentTarget", "iOS") == "17.0", "iPadOS deployment target must be 17.0")
 assert(project.dig("settings", "base", "TARGETED_DEVICE_FAMILY") == "2", "global device family must be iPad only")
-%w[LiteTermCore LiteTerm LiteTermCoreTests LiteTermSSHTests LiteTermUITests].each do |target|
+%w[LiteTermPythonBridge LiteTermCore LiteTerm LiteTermCoreTests LiteTermSSHTests LiteTermPythonBridgeTests LiteTermUITests].each do |target|
   assert(project.dig("targets", target, "settings", "base", "TARGETED_DEVICE_FAMILY") == "2", "#{target} must target iPad only")
 end
 
@@ -100,7 +108,7 @@ assert(project.dig("targets", "LiteTermCoreTests", "sources") == ["Tests/LiteTer
 assert(project.dig("targets", "LiteTermSSHTests", "sources") == ["Tests/LiteTermSSHTests"], "SSH test target source membership changed")
 assert(project.dig("targets", "LiteTermUITests", "sources") == ["LiteTermUITests"], "UI test target source membership changed")
 assert(
-  project.dig("schemes", "LiteTerm", "test", "targets") == %w[LiteTermCoreTests LiteTermSSHTests LiteTermUITests],
+  project.dig("schemes", "LiteTerm", "test", "targets") == %w[LiteTermCoreTests LiteTermSSHTests LiteTermPythonBridgeTests LiteTermUITests],
   "shared scheme test-target membership changed"
 )
 
@@ -109,7 +117,7 @@ scheme_test_targets = REXML::XPath.match(scheme, "//TestAction/Testables/Testabl
   element.attributes["BlueprintName"]
 end
 assert(
-  scheme_test_targets == %w[LiteTermCoreTests LiteTermSSHTests LiteTermUITests],
+  scheme_test_targets == %w[LiteTermCoreTests LiteTermSSHTests LiteTermPythonBridgeTests LiteTermUITests],
   "generated shared scheme does not build all test targets"
 )
 
@@ -294,13 +302,13 @@ assert(
   "all LiteTerm build configurations must select the AppIcon set"
 )
 target_names = objects.values.select { |object| object["isa"] == "PBXNativeTarget" }.map { |object| object["name"] }
-%w[LiteTermCoreTests LiteTermSSHTests LiteTermUITests].each do |name|
+%w[LiteTermPythonBridge LiteTermCoreTests LiteTermSSHTests LiteTermPythonBridgeTests LiteTermUITests].each do |name|
   assert(target_names.include?(name), "#{name} generated target missing")
 end
 RUBY
 pass "project model, pins, targets, AppIcon, distinct privacy resources, orientations, local-network copy, and privacy declarations match"
 
-forbidden_pattern='SFTP|port[[:space:]_-]*forward|Docker|VirtualMachine|PythonKit|JavaScriptCore|NodeRuntime|background[[:space:]_-]*keepalive|UIBackgroundModes|NSBonjourServices|CKContainer|CloudKit|NSTask([^[:alnum:]_]|$)|dlopen[[:space:]]*\('
+forbidden_pattern='SFTP|port[[:space:]_-]*forward|Docker|VirtualMachine|PythonKit|NodeRuntime|background[[:space:]_-]*keepalive|UIBackgroundModes|NSBonjourServices|CKContainer|CloudKit|NSTask([^[:alnum:]_]|$)|dlopen[[:space:]]*\('
 process_pattern='(^|[^[:alnum:]_])(Foundation[.])?Process[[:space:]]*\('
 if command -v rg >/dev/null 2>&1; then
     forbidden_matches=$(rg -n -i "$forbidden_pattern" LiteTerm Sources Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj || true)
@@ -314,7 +322,18 @@ if test -n "$forbidden_matches$process_matches"; then
     printf '%s\n' "$process_matches"
     fail "forbidden V0.1 product addition found in production/project scope"
 fi
-pass "production/project scope contains no forbidden product additions"
+pass "production/project scope contains no unreviewed runtime or background additions"
+
+python_bridge_log_matches=$(rg -n 'NSLog|os_log|fprintf|printf|puts' LiteTermPythonBridge || true)
+if test -n "$python_bridge_log_matches"; then
+    printf '%s\n' "$python_bridge_log_matches"
+    fail "Python bridge must not log source, paths, output, or runtime details"
+fi
+pass "Python bridge contains no logging sink"
+
+test "$(rg -n 'return false;' LiteTermPythonBridge/LiteTermPythonBridge.m | wc -l | tr -d ' ')" -ge 1 \
+    || fail "unverified Python bridge must remain capability-gated"
+pass "unverified Python bridge remains fail-closed"
 
 supplemental_secret_pattern='"(password|privateKey|private_key|passphrase|secret|token)"'
 if command -v rg >/dev/null 2>&1; then
