@@ -38,6 +38,7 @@ final class AppModel: ObservableObject {
 
     var onHostsRequested: (() -> Void)?
     var canRequestHosts: Bool { onHostsRequested != nil }
+    var activeWorkspaceURL: URL { folderAuthorizationStore.activeRootURL }
 
     convenience init() {
         self.init(
@@ -58,10 +59,19 @@ final class AppModel: ObservableObject {
 
         var initialRoot = authorizationStore.documentsURL
         var initialError: String?
-        do {
-            initialRoot = try authorizationStore.restore()
-        } catch {
-            initialError = error.localizedDescription
+        #if DEBUG
+        let isWorkspaceUITest = ProcessInfo.processInfo.arguments.contains("-ui-testing-workspace")
+        #else
+        let isWorkspaceUITest = false
+        #endif
+        if isWorkspaceUITest {
+            authorizationStore.useAppDocuments()
+        } else {
+            do {
+                initialRoot = try authorizationStore.restore()
+            } catch {
+                initialError = error.localizedDescription
+            }
         }
 
         let terminalSession = TerminalSessionCoordinator(
@@ -99,6 +109,15 @@ final class AppModel: ObservableObject {
         }
 
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-workspace") {
+            let fixtureURL = authorizationStore.documentsURL.appendingPathComponent("index.html")
+            if !FileManager.default.fileExists(atPath: fixtureURL.path) {
+                try? Data("<h1>LiteTerm workspace</h1>".utf8).write(
+                    to: fixtureURL,
+                    options: .atomic
+                )
+            }
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-open-editor") {
             let testURL = authorizationStore.documentsURL.appendingPathComponent("UITestEditor.txt")
             if !FileManager.default.fileExists(atPath: testURL.path) {

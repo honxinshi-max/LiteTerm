@@ -48,6 +48,7 @@ struct TerminalScreen: View {
         }
         .sheet(item: $model.editorDocument) { document in
             TextFileEditor(url: document.url) { _ in
+                model.workspaceSourceDidChange()
                 model.editorDocument = nil
             }
         }
