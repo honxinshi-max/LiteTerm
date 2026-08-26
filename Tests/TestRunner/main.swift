@@ -39,6 +39,9 @@ struct LiteTermCoreTestRunner {
         checkExactShellCommandSet(&failures)
         checkWorkspaceClassification(&failures)
         checkWorkspaceInventoryPolicy(&failures)
+        checkWorkspaceProfileAndSnapshot(&failures)
+        checkWorkspaceProblemPrivacy(&failures)
+        checkBoundedRuntimeOutput(&failures)
         checkSymlinkedShellPathIsRejected(&failures)
         checkWorkspaceVirtualPaths(&failures)
         await checkLocalShellFileOperations(&failures)
@@ -59,7 +62,7 @@ struct LiteTermCoreTestRunner {
         checkSSHConnectionStateAndReconnect(&failures)
         await checkAcceptanceFlow(&failures)
 
-        finish(failures, passingCheckCount: 32)
+        finish(failures, passingCheckCount: 35)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -281,6 +284,77 @@ struct LiteTermCoreTestRunner {
             "workspace inventory makes the single-file limit a gate failure",
             &failures
         )
+    }
+
+    private static func checkWorkspaceProfileAndSnapshot(_ failures: inout [String]) {
+        do {
+            let profile = try WorkspaceProfile(
+                kind: .web,
+                entrypoint: "public/index.html",
+                testConvention: .webSmoke(relativePaths: ["tests/smoke.js"]),
+                healthPath: "health"
+            )
+            expect(profile.healthPath == "health", "workspace profile retains a normalized relative health path", &failures)
+            let first = WorkspaceSnapshotEntry(
+                relativePath: "a.py",
+                byteCount: 1,
+                modifiedAtNanoseconds: 1,
+                sha256: Data(repeating: 0xA1, count: 32)
+            )
+            let second = WorkspaceSnapshotEntry(
+                relativePath: "z.py",
+                byteCount: 1,
+                modifiedAtNanoseconds: 2,
+                sha256: Data(repeating: 0xB2, count: 32)
+            )
+            let snapshot = try WorkspaceSnapshot(
+                generation: 4,
+                entries: [second, first],
+                manifestSHA256: Data(repeating: 0xCC, count: 32)
+            )
+            expect(snapshot.entries.map(\.relativePath) == ["a.py", "z.py"], "workspace snapshot canonicalizes manifest order", &failures)
+        } catch {
+            failures.append("workspace profile and snapshot accept normalized bounded input")
+        }
+    }
+
+    private static func checkWorkspaceProblemPrivacy(_ failures: inout [String]) {
+        do {
+            let problem = try WorkspaceProblem(
+                stage: .check,
+                severity: .error,
+                category: .syntax,
+                relativePath: "Sources/private-name.swift",
+                line: 9,
+                message: String(repeating: "é", count: 400)
+            )
+            let encoded = try JSONEncoder().encode(problem.persistenceProjection)
+            let persisted = String(decoding: encoded, as: UTF8.self)
+            expect(problem.message.utf8.count <= 512, "workspace problem message is bounded in memory", &failures)
+            expect(!persisted.contains("private-name") && !persisted.contains("Sources"), "workspace problem persistence drops locators and messages", &failures)
+        } catch {
+            failures.append("workspace problem accepts a normalized relative locator")
+        }
+    }
+
+    private static func checkBoundedRuntimeOutput(_ failures: inout [String]) {
+        var output = BoundedRuntimeOutput(lineLimit: 3, byteLimit: 100)
+        output.append("one")
+        output.append("two")
+        output.append("three")
+        output.append("four")
+        expect(
+            output.lines == [BoundedRuntimeOutput.truncationMarker, "three", "four"],
+            "runtime output retains a truncation marker and newest lines",
+            &failures
+        )
+        expect(output.totalByteCount <= 100, "runtime output accounts for its byte limit", &failures)
+        var byteBounded = BoundedRuntimeOutput(lineLimit: 10, byteLimit: 32)
+        byteBounded.append(String(repeating: "修", count: 20))
+        expect(byteBounded.didTruncate, "runtime output marks a single oversized UTF-8 line as truncated", &failures)
+        expect(byteBounded.totalByteCount <= 32, "runtime output keeps oversized UTF-8 content inside its byte budget", &failures)
+        let budget = RuntimeResourceBudget.iPadCandidate
+        expect(budget.pythonResidentBytes == 180 * 1_024 * 1_024, "Python candidate RSS budget remains explicit", &failures)
     }
 
     private static func checkSymlinkedShellPathIsRejected(_ failures: inout [String]) {
