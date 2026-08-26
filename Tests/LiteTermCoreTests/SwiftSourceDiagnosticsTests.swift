@@ -34,7 +34,7 @@ final class SwiftSourceDiagnosticsTests: XCTestCase {
     func testIgnoresDelimitersInsideCommentsAndStrings() {
         let source = #"""
         // } ] )
-        let text = "{" 
+        let text = "{"
         /* nested /* } */ comment */
         func run() { print(text) }
         """#
