@@ -40,11 +40,7 @@ if [ -n "$link_hits" ]; then
 fi
 
 content_hits="$(
-    rg -n -i --hidden \
-        --glob '!.git/**' \
-        --glob '!**/.build/**' \
-        --glob '!**/DerivedData/**' \
-        "$legacy_name" . || true
+    git grep -n -I -i "$legacy_name" -- . || true
 )"
 
 if [ -n "$content_hits" ]; then
