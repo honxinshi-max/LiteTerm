@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "version": "3.14.7",
+  "source_url": "https://www.python.org/ftp/python/3.14.7/Python-3.14.7.tgz",
+  "source_sha256": "62859805f6fdf25e2bcbf3fa3217801e1996887ca33e6a2af80674bdfa2dbe07",
+  "tag": "v3.14.7",
+  "tag_commit": "823f0323ee6ec1402088b73bce1a38473cac36dc",
+  "build_command": [
+    "python3",
+    "Apple",
+    "build",
+    "iOS"
+  ],
+  "required_slices": [
+    "ios-arm64",
+    "ios-arm64_x86_64-simulator"
+  ]
+}
