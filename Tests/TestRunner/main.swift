@@ -37,6 +37,8 @@ struct LiteTermCoreTestRunner {
         checkQuotedShellPath(&failures)
         checkShellArityRejection(&failures)
         checkExactShellCommandSet(&failures)
+        checkWorkspaceClassification(&failures)
+        checkWorkspaceInventoryPolicy(&failures)
         checkSymlinkedShellPathIsRejected(&failures)
         checkWorkspaceVirtualPaths(&failures)
         await checkLocalShellFileOperations(&failures)
@@ -57,7 +59,7 @@ struct LiteTermCoreTestRunner {
         checkSSHConnectionStateAndReconnect(&failures)
         await checkAcceptanceFlow(&failures)
 
-        finish(failures, passingCheckCount: 30)
+        finish(failures, passingCheckCount: 32)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -196,6 +198,89 @@ struct LiteTermCoreTestRunner {
                 failures.append("shell parser recognizes \(input)")
             }
         }
+    }
+
+    private static func checkWorkspaceClassification(_ failures: inout [String]) {
+        let classifier = WorkspaceClassifier()
+        let swift = classifier.classify(relativePaths: ["Package.swift", "Sources/main.swift"])
+        expect(swift.kind == .swift, "workspace classifier recognizes Swift source evidence", &failures)
+        let python = classifier.classify(relativePaths: ["pyproject.toml", "src/main.py"])
+        expect(python.kind == .python, "workspace classifier recognizes Python source evidence", &failures)
+        let web = classifier.classify(relativePaths: ["index.html", "package.json"])
+        expect(web.kind == .web, "static index remains a Web workspace with package metadata", &failures)
+        let conflict = classifier.classify(relativePaths: ["Package.swift", "main.py"])
+        expect(conflict.kind == .ambiguous, "conflicting supported workspace indicators require a session choice", &failures)
+        let node = classifier.classify(relativePaths: ["package.json", "src/app.js"])
+        expect(node.kind == .nodeRequired, "package metadata without static index is Node-required", &failures)
+        let unsupported = classifier.classify(relativePaths: ["README.md"])
+        expect(unsupported.kind == .unsupported, "unknown project evidence remains unsupported", &failures)
+    }
+
+    private static func checkWorkspaceInventoryPolicy(_ failures: inout [String]) {
+        let policy = WorkspaceInventoryPolicy()
+        let entries = [
+            WorkspaceInventoryEntry(
+                relativePath: "main.py",
+                byteCount: 20,
+                isDirectory: false,
+                isRegularFile: true,
+                isSymbolicLink: false,
+                symbolicLinkTargetIsInsideRoot: false
+            ),
+            WorkspaceInventoryEntry(
+                relativePath: "credentials.json",
+                byteCount: 20,
+                isDirectory: false,
+                isRegularFile: true,
+                isSymbolicLink: false,
+                symbolicLinkTargetIsInsideRoot: false
+            )
+        ]
+        let result = policy.evaluate(entries)
+        expect(result.acceptedFiles.map(\.relativePath) == ["main.py"], "workspace inventory excludes credential-like files", &failures)
+        expect(result.violations.isEmpty, "excluded workspace files do not produce a false gate success or limit failure", &failures)
+
+        let malformed = policy.evaluate([
+            WorkspaceInventoryEntry(
+                relativePath: "../escape.py",
+                byteCount: 1,
+                isDirectory: false,
+                isRegularFile: true,
+                isSymbolicLink: false,
+                symbolicLinkTargetIsInsideRoot: false
+            )
+        ])
+        expect(malformed.violations == [.invalidRelativePath], "workspace inventory rejects escaping relative paths", &failures)
+
+        let tooMany = (0...1_000).map { index in
+            WorkspaceInventoryEntry(
+                relativePath: "Sources/\(index).swift",
+                byteCount: 1,
+                isDirectory: false,
+                isRegularFile: true,
+                isSymbolicLink: false,
+                symbolicLinkTargetIsInsideRoot: false
+            )
+        }
+        expect(
+            policy.evaluate(tooMany).violations.contains(.entryCountExceeded(limit: 1_000)),
+            "workspace inventory makes the entry limit a gate failure",
+            &failures
+        )
+
+        let oversized = WorkspaceInventoryEntry(
+            relativePath: "large.py",
+            byteCount: 5 * 1_024 * 1_024 + 1,
+            isDirectory: false,
+            isRegularFile: true,
+            isSymbolicLink: false,
+            symbolicLinkTargetIsInsideRoot: false
+        )
+        expect(
+            policy.evaluate([oversized]).violations == [.fileBytesExceeded(limit: 5 * 1_024 * 1_024)],
+            "workspace inventory makes the single-file limit a gate failure",
+            &failures
+        )
     }
 
     private static func checkSymlinkedShellPathIsRejected(_ failures: inout [String]) {
