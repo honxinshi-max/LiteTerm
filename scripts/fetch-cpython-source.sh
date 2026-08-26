@@ -3,10 +3,10 @@ set -eu
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 metadata="$project_root/Vendor/CPython/source.json"
-cache_root=${LITETERM_CPYTHON_CACHE_ROOT:-"$project_root/.cache/cpython"}
+cache_root=${LITESPACE_CPYTHON_CACHE_ROOT:-"$project_root/.cache/cpython"}
 archive="$cache_root/Python-3.14.7.tgz"
 source_root="$cache_root/Python-3.14.7"
-marker="$source_root/.liteterm-source.json"
+marker="$source_root/.litespace-source.json"
 expected_sha=62859805f6fdf25e2bcbf3fa3217801e1996887ca33e6a2af80674bdfa2dbe07
 source_url=https://www.python.org/ftp/python/3.14.7/Python-3.14.7.tgz
 

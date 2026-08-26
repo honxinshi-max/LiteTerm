@@ -15,7 +15,7 @@ pass() {
 
 command -v rg >/dev/null 2>&1 || fail "ripgrep is required for the privacy verifier"
 
-production_scope='LiteTerm Sources LiteTermPythonBridge Package.swift project.yml LiteTerm.xcodeproj/project.pbxproj'
+production_scope='LiteSpace Sources LiteSpacePythonBridge Package.swift project.yml LiteSpace.xcodeproj/project.pbxproj'
 forbidden_pattern='NodeRuntime|PythonKit|NSTask([^[:alnum:]_]|$)|UIBackgroundModes|beginBackgroundTask|NSBonjourServices|CKContainer|CloudKit|Firebase|Crashlytics|Sentry|TelemetryClient|AnalyticsSDK'
 forbidden_api_pattern='(^|[^[:alnum:]_.])(posix_spawn|popen|system|fork|execv|execve|execvp|dlopen)[[:space:]]*\('
 process_pattern='(^|[^[:alnum:]_])(Foundation[.])?Process[[:space:]]*\('
@@ -30,10 +30,10 @@ if test -n "$forbidden_matches$forbidden_api_matches$process_matches"; then
 fi
 pass "no unreviewed process, runtime, background, cloud, or telemetry capability"
 
-listener=LiteTerm/Features/Workspace/Runtime/LoopbackPreviewServer.swift
+listener=LiteSpace/Features/Workspace/Runtime/LoopbackPreviewServer.swift
 test "$(rg -n -F '.bind(host: "127.0.0.1", port: 0)' "$listener" | wc -l | tr -d ' ')" = 1 \
     || fail "workspace preview must bind exactly once to 127.0.0.1:0"
-listener_scope='LiteTerm/Features/Workspace LiteTerm/Resources/Info.plist project.yml LiteTerm.xcodeproj/project.pbxproj'
+listener_scope='LiteSpace/Features/Workspace LiteSpace/Resources/Info.plist project.yml LiteSpace.xcodeproj/project.pbxproj'
 listener_matches=$(rg -n '0[.]0[.]0[.]0|\[::\]|host:[[:space:]]*nil|NSBonjourServices' $listener_scope || true)
 if test -n "$listener_matches"; then
     printf '%s\n' "$listener_matches"
@@ -41,24 +41,24 @@ if test -n "$listener_matches"; then
 fi
 pass "workspace listener is ephemeral loopback-only with no Bonjour declaration"
 
-logging_matches=$(rg -n 'NSLog|os_log|Logger[[:space:]]*\(|print[[:space:]]*\(' LiteTerm/Features/Workspace LiteTermPythonBridge || true)
+logging_matches=$(rg -n 'NSLog|os_log|Logger[[:space:]]*\(|print[[:space:]]*\(' LiteSpace/Features/Workspace LiteSpacePythonBridge || true)
 if test -n "$logging_matches"; then
     printf '%s\n' "$logging_matches"
     fail "workspace or Python bridge contains a content-capable logging sink"
 fi
 pass "workspace and Python bridge contain no content-capable logging sink"
 
-persistence_files=$(rg -l 'UserDefaults|defaults[.]set' LiteTerm/Features/Workspace || true)
-test "$persistence_files" = 'LiteTerm/Features/Workspace/WorkspaceProfileStore.swift' \
+persistence_files=$(rg -l 'UserDefaults|defaults[.]set' LiteSpace/Features/Workspace || true)
+test "$persistence_files" = 'LiteSpace/Features/Workspace/WorkspaceProfileStore.swift' \
     || fail "workspace persistence expanded beyond the reviewed non-sensitive profile store"
-port_disclosure=$(rg -n -i 'secret|token|cookie|authentication' LiteTerm/Features/Workspace/WorkspacePortsPanel.swift || true)
+port_disclosure=$(rg -n -i 'secret|token|cookie|authentication' LiteSpace/Features/Workspace/WorkspacePortsPanel.swift || true)
 if test -n "$port_disclosure"; then
     printf '%s\n' "$port_disclosure"
     fail "Ports UI references authentication material"
 fi
 pass "workspace persistence and Ports UI retain the reviewed data-minimization boundary"
 
-absolute_project_paths=$(rg -n '/Users/|/private/var/' LiteTerm.xcodeproj/project.pbxproj LiteTerm.xcodeproj/xcshareddata/xcschemes/LiteTerm.xcscheme || true)
+absolute_project_paths=$(rg -n '/Users/|/private/var/' LiteSpace.xcodeproj/project.pbxproj LiteSpace.xcodeproj/xcshareddata/xcschemes/LiteSpace.xcscheme || true)
 if test -n "$absolute_project_paths"; then
     printf '%s\n' "$absolute_project_paths"
     fail "generated Xcode project contains a host absolute path"
@@ -73,8 +73,8 @@ pass "generated project and tracked tree contain no host path or generated runti
 
 /usr/bin/ruby -rjson -e '
   %w[
-    LiteTerm/Resources/PrivacyInfo.xcprivacy
-    Sources/LiteTermCore/Resources/PrivacyInfo.xcprivacy
+    LiteSpace/Resources/PrivacyInfo.xcprivacy
+    Sources/LiteSpaceCore/Resources/PrivacyInfo.xcprivacy
   ].each do |path|
     json = IO.popen(["/usr/bin/plutil", "-convert", "json", "-o", "-", path], &:read)
     manifest = JSON.parse(json)

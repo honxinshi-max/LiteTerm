@@ -1,1 +1,1 @@
-../../LiteTerm/Features/SSH/SSHAuthenticationDelegate.swift
+../../LiteSpace/Features/SSH/SSHAuthenticationDelegate.swift

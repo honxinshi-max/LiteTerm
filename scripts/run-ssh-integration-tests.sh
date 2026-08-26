@@ -7,4 +7,4 @@ cd "$project_root"
 swift run \
     --package-path Tests/SSHIntegrationRunner \
     --only-use-versions-from-resolved-file \
-    LiteTermSSHIntegrationTestRunner
+    LiteSpaceSSHIntegrationTestRunner

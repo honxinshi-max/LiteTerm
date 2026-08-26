@@ -2,8 +2,8 @@
 import PackageDescription
 
 let package = Package(
-    name: "LiteTermSyntheticSwiftFixture",
+    name: "LiteSpaceSyntheticSwiftFixture",
     targets: [
-        .executableTarget(name: "LiteTermSyntheticSwiftFixture")
+        .executableTarget(name: "LiteSpaceSyntheticSwiftFixture")
     ]
 )

@@ -2,10 +2,10 @@
 import PackageDescription
 
 let package = Package(
-    name: "LiteTermSSHIntegrationTests",
+    name: "LiteSpaceSSHIntegrationTests",
     platforms: [.macOS(.v14)],
     dependencies: [
-        .package(name: "LiteTerm", path: "../.."),
+        .package(name: "LiteSpace", path: "../.."),
         .package(
             url: "https://github.com/apple/swift-nio.git",
             revision: "0b18836bd8b0162e7e17a995a3fbee20ed8f3b2b"
@@ -25,9 +25,9 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "LiteTermSSHIntegrationTestRunner",
+            name: "LiteSpaceSSHIntegrationTestRunner",
             dependencies: [
-                .product(name: "LiteTermCore", package: "LiteTerm"),
+                .product(name: "LiteSpaceCore", package: "LiteSpace"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
                 .product(name: "NIOEmbedded", package: "swift-nio"),

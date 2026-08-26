@@ -1,11 +1,11 @@
-# LiteTerm product scope
+# LiteSpace product scope
 
 Date: 2026-08-26
 
 ## `role_positioning_card`
 
 - Role: producer.
-- Target user: an iPad user who wants a lightweight, on-device edit, check, test, and preview loop while retaining LiteTerm's local-file and SSH workflows.
+- Target user: an iPad user who wants a lightweight, on-device edit, check, test, and preview loop while retaining LiteSpace's local-file and SSH workflows.
 - Target job: authorize a folder, edit one source file, understand bounded diagnostics, run only supported project types, and open a preview only after the current source generation is healthy.
 - Value trigger: Inspect -> Check -> Test -> Start -> Health completes in one foreground session before one authenticated loopback port becomes visible.
 - Observable feedback loop: runtime kind, normalized state/failure category, bounded duration/counters, aggregate RSS, port-lease outcome, and acceptance result. Source, content, filenames, full paths, commands, output, credentials, destinations, and preview secrets are prohibited from retained evidence.
@@ -15,7 +15,7 @@ The machine-readable version is [`docs/drx/role_positioning_card.yaml`](drx/role
 
 ## Product promise
 
-LiteTerm is an iPad-first lightweight terminal and local workspace. It keeps the existing bounded Local Shell and SSH terminal, and adds one foreground-only workspace for small, user-visible projects. The UI provides a file browser, one-document editor, Check/Test/Run/Stop, preview, and bottom Terminal/Problems/Ports surfaces.
+LiteSpace is an iPad-first lightweight terminal and local workspace. It keeps the existing bounded Local Shell and SSH terminal, and adds one foreground-only workspace for small, user-visible projects. The UI provides a file browser, one-document editor, Check/Test/Run/Stop, preview, and bottom Terminal/Problems/Ports surfaces.
 
 The workspace commands are typed application actions. They do not launch a Unix shell, arbitrary process, project script, package manager, downloaded executable, or background service.
 

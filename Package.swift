@@ -4,25 +4,25 @@ import PackageDescription
 
 var packageTargets: [Target] = [
     .target(
-        name: "LiteTermPythonBridge",
-        path: "LiteTermPythonBridge",
+        name: "LiteSpacePythonBridge",
+        path: "LiteSpacePythonBridge",
         publicHeadersPath: "include"
     ),
     .target(
-        name: "LiteTermCore",
+        name: "LiteSpaceCore",
         resources: [.process("Resources/PrivacyInfo.xcprivacy")]
     ),
     .target(
-        name: "LiteTermWorkspaceSupport",
+        name: "LiteSpaceWorkspaceSupport",
         dependencies: [
-            "LiteTermCore",
-            "LiteTermPythonBridge",
+            "LiteSpaceCore",
+            "LiteSpacePythonBridge",
             .product(name: "NIOCore", package: "swift-nio"),
             .product(name: "NIOHTTP1", package: "swift-nio"),
             .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
             .product(name: "NIOTransportServices", package: "swift-nio-transport-services")
         ],
-        path: "LiteTerm/Features/Workspace",
+        path: "LiteSpace/Features/Workspace",
         exclude: [
             "CodeEditorScreen.swift",
             "WorkspaceBottomDrawer.swift",
@@ -56,29 +56,29 @@ var packageTargets: [Target] = [
         ]
     ),
     .executableTarget(
-        name: "LiteTermCoreTestRunner",
-        dependencies: ["LiteTermCore", "LiteTermPythonBridge", "LiteTermWorkspaceSupport"],
+        name: "LiteSpaceCoreTestRunner",
+        dependencies: ["LiteSpaceCore", "LiteSpacePythonBridge", "LiteSpaceWorkspaceSupport"],
         path: "Tests/TestRunner"
     )
 ]
 
-if ProcessInfo.processInfo.environment["LITETERM_ENABLE_SWIFTPM_XCTESTS"] == "1" {
+if ProcessInfo.processInfo.environment["LITESPACE_ENABLE_SWIFTPM_XCTESTS"] == "1" {
     packageTargets.append(
         .testTarget(
-            name: "LiteTermCoreTests",
-            dependencies: ["LiteTermCore"]
+            name: "LiteSpaceCoreTests",
+            dependencies: ["LiteSpaceCore"]
         )
     )
 }
 
 let package = Package(
-    name: "LiteTerm",
+    name: "LiteSpace",
     platforms: [
         .macOS(.v14),
         .iOS(.v17)
     ],
     products: [
-        .library(name: "LiteTermCore", targets: ["LiteTermCore"])
+        .library(name: "LiteSpaceCore", targets: ["LiteSpaceCore"])
     ],
     dependencies: [
         .package(

@@ -6,7 +6,7 @@ build/
 *.xcuserstate
 *.xcscmblueprint
 xcuserdata/
-LiteTerm.xcodeproj/project.xcworkspace/xcuserdata/
-LiteTerm.xcodeproj/xcuserdata/
+LiteSpace.xcodeproj/project.xcworkspace/xcuserdata/
+LiteSpace.xcodeproj/xcuserdata/
 .cache/cpython/
 .artifacts/cpython/

@@ -1,6 +1,6 @@
 schema: drx.role_positioning_card.v1
 role: producer
-product: LiteTerm
+product: LiteSpace
 target_user: iPad user who needs a lightweight on-device edit, check, test, and preview loop while retaining the existing local file and SSH workflows
 target_job: authorize a folder, edit one source file, run a bounded local workspace gate, understand failures, open a loopback preview only after readiness, and release all runtime resources on stop or background
 value_trigger: the current source generation completes inspect, check, test, start, and health stages before one authenticated loopback port becomes visible within the physical-iPad resource budget
