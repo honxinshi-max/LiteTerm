@@ -170,7 +170,7 @@ MIT 与 Apache-2.0 均允许商业 App 使用，但分发时必须保留相应�
 ## 获取、构建与安装
 
 ```sh
-git clone <从当前 GitHub 仓库页面复制的 URL> LiteSpace
+git clone https://github.com/honxinshi-max/LiteSpace.git
 cd LiteSpace
 open LiteSpace.xcodeproj
 ```

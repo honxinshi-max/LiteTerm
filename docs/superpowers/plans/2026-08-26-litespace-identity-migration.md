@@ -59,4 +59,4 @@
 - [x] Run the identity gate and confirm zero residuals.
 - [x] Run the full project verifier serially in the environment that permits SwiftPM.
 - [x] Run `git diff --check`, plist parsing, status, and diff review.
-- [ ] Commit the migration, push the current branch, and compare local/remote commit IDs.
+- [x] Commit the migration, push the current branch, and compare local/remote commit IDs.
