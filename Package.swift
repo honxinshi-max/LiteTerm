@@ -16,6 +16,7 @@ var packageTargets: [Target] = [
         name: "LiteTermWorkspaceSupport",
         dependencies: [
             "LiteTermCore",
+            "LiteTermPythonBridge",
             .product(name: "NIOCore", package: "swift-nio"),
             .product(name: "NIOHTTP1", package: "swift-nio"),
             .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
@@ -46,7 +47,11 @@ var packageTargets: [Target] = [
             "Runtime/WebWorkspaceRunner.swift",
             "Runtime/WebSmokeWebView.swift",
             "Runtime/WebErrorBridge.swift",
-            "Runtime/SwiftWorkspaceAdvisor.swift"
+            "Runtime/SwiftWorkspaceAdvisor.swift",
+            "Runtime/PythonRuntimeConfiguration.swift",
+            "Runtime/PythonProblemMapper.swift",
+            "Runtime/PythonRunDisposition.swift",
+            "Runtime/PythonWorkspaceRunner.swift"
         ]
     ),
     .executableTarget(

@@ -176,12 +176,11 @@ public final class WorkspaceController: ObservableObject {
                     operationID: operationID
                 )
             case .python:
-                await fail(
+                await executePython(
+                    action,
+                    snapshot: snapshot,
                     generation: generation,
-                    operationID: operationID,
-                    failure: .unsupported,
-                    problemCategory: .unsupported,
-                    message: "The reviewed Python runtime has not been installed yet."
+                    operationID: operationID
                 )
             case .nodeRequired, .unsupported, .ambiguous:
                 break
@@ -220,6 +219,55 @@ public final class WorkspaceController: ObservableObject {
         }
         _ = gate.reduce(.checkOnlyCompleted, generation: generation, now: services.now())
         publish(statusOverride: "Lightweight diagnostics passed")
+        finishTerminalRequestIfNeeded()
+    }
+
+    private func executePython(
+        _ action: WorkspaceControllerAction,
+        snapshot: WorkspaceCapturedSnapshot,
+        generation: UInt64,
+        operationID: UUID
+    ) async {
+        runtimeLabel = "Embedded Python"
+        let entrypoint = snapshot.relativePaths.first(where: { $0 == "main.py" })
+            ?? snapshot.relativePaths.first(where: { $0.lowercased().hasSuffix(".py") })
+        let profile: WorkspaceProfile
+        do {
+            profile = try WorkspaceProfile(
+                kind: .python,
+                entrypoint: entrypoint,
+                testConvention: snapshot.relativePaths.contains(where: { $0.hasPrefix("tests/") })
+                    ? .pythonUnittest(startDirectory: "tests", pattern: "test*.py")
+                    : .none,
+                healthPath: ""
+            )
+        } catch {
+            await fail(
+                generation: generation,
+                operationID: operationID,
+                failure: .check,
+                problemCategory: .configuration,
+                message: "The Python workspace profile is invalid."
+            )
+            return
+        }
+
+        let report = await services.checkPython(snapshot, profile)
+        guard isCurrent(operationID, generation: generation), !Task.isCancelled else { return }
+        problems = report.problems
+        guard report.passed else {
+            await fail(
+                generation: generation,
+                operationID: operationID,
+                failure: report.availability == .unavailable ? .unsupported : .check,
+                existingProblems: report.problems
+            )
+            return
+        }
+
+        // This branch remains unreachable until the artifact-backed runner is enabled.
+        _ = gate.reduce(.checkOnlyCompleted, generation: generation, now: services.now())
+        publish(statusOverride: action == .check ? "Python checks passed" : "Python runtime gated")
         finishTerminalRequestIfNeeded()
     }
 
@@ -462,6 +510,7 @@ public final class WorkspaceController: ObservableObject {
         _ = gate.invalidate()
         currentLease = nil
         previewBootstrapURL = nil
+        await services.cancelPython()
         await services.stopServer()
         if shouldPublish { publish(statusOverride: "Idle") }
     }

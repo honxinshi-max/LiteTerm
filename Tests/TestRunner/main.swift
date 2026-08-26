@@ -54,6 +54,7 @@ struct LiteTermCoreTestRunner {
         await checkSwiftWorkspaceAdvisor(&failures)
         await checkWorkspaceController(&failures)
         checkPythonBridgeCapabilityBoundary(&failures)
+        await checkPythonWorkspaceCapability(&failures)
         await checkWorkspaceProfileStore(&failures)
         await checkLoopbackPreviewServer(&failures)
         await checkLoopbackHealthProbe(&failures)
@@ -78,7 +79,7 @@ struct LiteTermCoreTestRunner {
         checkSSHConnectionStateAndReconnect(&failures)
         await checkAcceptanceFlow(&failures)
 
-        finish(failures, passingCheckCount: 49)
+        finish(failures, passingCheckCount: 50)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -850,6 +851,25 @@ struct LiteTermCoreTestRunner {
                 &failures
             )
             await swiftController.stopAndInvalidate()
+
+            let pythonRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("LiteTerm-Runner-controller-python-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: pythonRoot, withIntermediateDirectories: true)
+            try Data("print('private')".utf8)
+                .write(to: pythonRoot.appendingPathComponent("main.py"))
+            let pythonController = WorkspaceController(rootURL: pythonRoot)
+            pythonController.perform(.run)
+            let pythonFailed = await waitForWorkspaceState(pythonController, timeout: .seconds(4)) {
+                $0.presentation.state == .failed
+            }
+            expect(
+                pythonFailed
+                    && pythonController.presentation.kind == .python
+                    && pythonController.presentation.publishedPort == nil,
+                "workspace controller recognizes Python but withholds a port without the verified runtime",
+                &failures
+            )
+            await pythonController.stopAndInvalidate()
         } catch {
             failures.append("workspace controller owns one fail-closed local runtime")
         }
@@ -885,6 +905,40 @@ struct LiteTermCoreTestRunner {
             "Python bridge policy rejects path escape, sockets, and subprocesses",
             &failures
         )
+    }
+
+    private static func checkPythonWorkspaceCapability(_ failures: inout [String]) async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LiteTerm-Runner-python-capability-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try Data("print('private')".utf8).write(to: root.appendingPathComponent("main.py"))
+            let inspection = try await WorkspaceInventoryService().inspect(rootURL: root)
+            let snapshot = try await WorkspaceSnapshotService().captureBundle(
+                generation: 6,
+                rootURL: root,
+                evaluation: inspection.evaluation
+            )
+            let profile = try WorkspaceProfile(
+                kind: .python,
+                entrypoint: "main.py",
+                testConvention: .none,
+                healthPath: ""
+            )
+            let report = await PythonWorkspaceRunner().check(snapshot: snapshot, profile: profile)
+            expect(
+                !report.passed && !report.didCompile,
+                "Python runner never claims compilation without the verified artifact",
+                &failures
+            )
+            expect(
+                report.problems.contains { $0.category == .unsupported },
+                "Python runner reports the unavailable reviewed runtime explicitly",
+                &failures
+            )
+        } catch {
+            failures.append("Python workspace capability gate inspects an immutable snapshot")
+        }
     }
 
     private static func checkWorkspaceProfileStore(_ failures: inout [String]) async {

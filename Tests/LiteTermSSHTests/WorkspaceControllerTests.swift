@@ -46,6 +46,19 @@ final class WorkspaceControllerTests: XCTestCase {
         XCTAssertTrue(controller.presentation.problems.contains { $0.category == .unsupported })
     }
 
+    func testPythonRecognitionDoesNotPublishPortWithoutVerifiedArtifact() async throws {
+        let root = try makeRoot(files: ["main.py": "print('private')"])
+        let controller = WorkspaceController(rootURL: root)
+
+        controller.perform(.run)
+        try await waitUntil { controller.presentation.state == .failed }
+
+        XCTAssertEqual(controller.presentation.kind, .python)
+        XCTAssertEqual(controller.presentation.runtimeLabel, "Embedded Python")
+        XCTAssertNil(controller.presentation.publishedPort)
+        XCTAssertTrue(controller.presentation.problems.contains { $0.category == .unsupported })
+    }
+
     private func makeRoot(files: [String: String]) throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("LiteTerm-WorkspaceControllerTests-\(UUID().uuidString)", isDirectory: true)

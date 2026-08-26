@@ -18,6 +18,11 @@ public struct WorkspaceControllerServices: @unchecked Sendable {
         Duration
     ) async -> [WorkspaceProblem]
     public var inspectSwift: @Sendable (WorkspaceCapturedSnapshot) async -> SwiftWorkspaceAdvice
+    public var checkPython: @Sendable (
+        WorkspaceCapturedSnapshot,
+        WorkspaceProfile
+    ) async -> PythonCheckReport
+    public var cancelPython: @Sendable () async -> Void
     public var startServer: @Sendable (
         UInt64,
         UUID,
@@ -48,6 +53,11 @@ public struct WorkspaceControllerServices: @unchecked Sendable {
             Duration
         ) async -> [WorkspaceProblem],
         inspectSwift: @escaping @Sendable (WorkspaceCapturedSnapshot) async -> SwiftWorkspaceAdvice,
+        checkPython: @escaping @Sendable (
+            WorkspaceCapturedSnapshot,
+            WorkspaceProfile
+        ) async -> PythonCheckReport,
+        cancelPython: @escaping @Sendable () async -> Void,
         startServer: @escaping @Sendable (
             UInt64,
             UUID,
@@ -66,6 +76,8 @@ public struct WorkspaceControllerServices: @unchecked Sendable {
         self.validateWeb = validateWeb
         self.smokeWeb = smokeWeb
         self.inspectSwift = inspectSwift
+        self.checkPython = checkPython
+        self.cancelPython = cancelPython
         self.startServer = startServer
         self.stopServer = stopServer
         self.serverIsRunning = serverIsRunning
@@ -78,6 +90,7 @@ public struct WorkspaceControllerServices: @unchecked Sendable {
         snapshots: WorkspaceSnapshotService = WorkspaceSnapshotService(),
         web: WebWorkspaceRunner = WebWorkspaceRunner(),
         swift: SwiftWorkspaceAdvisor = SwiftWorkspaceAdvisor(),
+        python: PythonWorkspaceRunner = PythonWorkspaceRunner(),
         server: LoopbackPreviewServer = LoopbackPreviewServer(),
         health: HealthProbe = HealthProbe()
     ) -> WorkspaceControllerServices {
@@ -97,6 +110,10 @@ public struct WorkspaceControllerServices: @unchecked Sendable {
                 await web.smoke(lease: lease, entrypoint: entrypoint, timeout: timeout)
             },
             inspectSwift: { snapshot in swift.inspect(snapshot: snapshot) },
+            checkPython: { snapshot, profile in
+                await python.check(snapshot: snapshot, profile: profile)
+            },
+            cancelPython: { await python.cancel() },
             startServer: { generation, runtimeID, source in
                 try await server.start(
                     generation: generation,
