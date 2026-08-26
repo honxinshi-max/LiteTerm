@@ -66,6 +66,17 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "EC1E3F5C6DE714FE4E266EBC"
+               BuildableName = "LiteTermPythonBridgeTests.xctest"
+               BlueprintName = "LiteTermPythonBridgeTests"
+               ReferencedContainer = "container:LiteTerm.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "0447B5C0B4AC6A0A270BC754"
                BuildableName = "LiteTermUITests.xctest"
                BlueprintName = "LiteTermUITests"
