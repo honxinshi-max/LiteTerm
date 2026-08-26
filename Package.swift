@@ -4,6 +4,11 @@ import PackageDescription
 
 var packageTargets: [Target] = [
     .target(
+        name: "LiteTermPythonBridge",
+        path: "LiteTermPythonBridge",
+        publicHeadersPath: "include"
+    ),
+    .target(
         name: "LiteTermCore",
         resources: [.process("Resources/PrivacyInfo.xcprivacy")]
     ),
@@ -17,6 +22,15 @@ var packageTargets: [Target] = [
             .product(name: "NIOTransportServices", package: "swift-nio-transport-services")
         ],
         path: "LiteTerm/Features/Workspace",
+        exclude: [
+            "CodeEditorScreen.swift",
+            "WorkspaceBottomDrawer.swift",
+            "WorkspaceFileBrowser.swift",
+            "WorkspacePortsPanel.swift",
+            "WorkspacePreview.swift",
+            "WorkspaceProblemsPanel.swift",
+            "WorkspaceScreen.swift"
+        ],
         sources: [
             "WorkspaceInventoryService.swift",
             "WorkspaceSnapshotService.swift",
@@ -37,7 +51,7 @@ var packageTargets: [Target] = [
     ),
     .executableTarget(
         name: "LiteTermCoreTestRunner",
-        dependencies: ["LiteTermCore", "LiteTermWorkspaceSupport"],
+        dependencies: ["LiteTermCore", "LiteTermPythonBridge", "LiteTermWorkspaceSupport"],
         path: "Tests/TestRunner"
     )
 ]

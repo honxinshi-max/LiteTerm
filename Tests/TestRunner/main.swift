@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import LiteTermCore
+import LiteTermPythonBridge
 import LiteTermWorkspaceSupport
 
 @main
@@ -52,6 +53,7 @@ struct LiteTermCoreTestRunner {
         await checkWebWorkspaceSmoke(&failures)
         await checkSwiftWorkspaceAdvisor(&failures)
         await checkWorkspaceController(&failures)
+        checkPythonBridgeCapabilityBoundary(&failures)
         await checkWorkspaceProfileStore(&failures)
         await checkLoopbackPreviewServer(&failures)
         await checkLoopbackHealthProbe(&failures)
@@ -76,7 +78,7 @@ struct LiteTermCoreTestRunner {
         checkSSHConnectionStateAndReconnect(&failures)
         await checkAcceptanceFlow(&failures)
 
-        finish(failures, passingCheckCount: 48)
+        finish(failures, passingCheckCount: 49)
     }
 
     private static func checkHistoryDropsOldestLine(_ failures: inout [String]) {
@@ -866,6 +868,23 @@ struct LiteTermCoreTestRunner {
             try? await Task.sleep(for: .milliseconds(25))
         }
         return condition(controller)
+    }
+
+    private static func checkPythonBridgeCapabilityBoundary(_ failures: inout [String]) {
+        expect(
+            !LTIsPythonRuntimeAvailable(),
+            "Python bridge remains disabled without a verified iOS artifact",
+            &failures
+        )
+        let safePath = "package/main.py".withCString(LTIsSafePythonRelativePath)
+        let escapedPath = "../private.py".withCString(LTIsSafePythonRelativePath)
+        let deniedSocket = "socket.__new__".withCString(LTIsDeniedPythonAuditEvent)
+        let deniedSubprocess = "subprocess.Popen".withCString(LTIsDeniedPythonAuditEvent)
+        expect(
+            safePath && !escapedPath && deniedSocket && deniedSubprocess,
+            "Python bridge policy rejects path escape, sockets, and subprocesses",
+            &failures
+        )
     }
 
     private static func checkWorkspaceProfileStore(_ failures: inout [String]) async {
